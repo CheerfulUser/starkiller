@@ -27,7 +27,7 @@ import scipy.integrate
 import scipy.interpolate
 from glob import glob
 import string
-from theif.utils.deredden import unred
+from thief.utils.deredden import unred
 
 import matplotlib.pyplot as plt
 
