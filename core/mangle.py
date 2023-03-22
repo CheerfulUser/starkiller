@@ -13,11 +13,11 @@ def cube_mangle(spec_files,mags,svo_bp=['GAIA/GAIA3.Gbp','GAIA/GAIA3.G','GAIA/GA
 	
 	pbs = load_pbs(svo_filters,0,'AB',SVO=True)
 	mangled = []
-	for spec_file in spec_files:
-		spec = at.Table.read(package_dir + spec_file, format='ascii')
+	for i in range(len(spec_files)):
+		spec = at.Table.read(package_dir + spec_files[i], format='ascii')
 		spec = S.ArraySpectrum(wave=spec['wave'],
 	                                   flux=spec['flux'],fluxunits='flam')
-		flux = mangle_spectrum2(spec.wave,spec.flux,pbs,mags)
+		flux = mangle_spectrum2(spec.wave,spec.flux,pbs,mags[i])
 		spec = S.ArraySpectrum(wave=spec['wave'],
 	                                   flux=flux,fluxunits='flam')
 		mangled += [spec]
