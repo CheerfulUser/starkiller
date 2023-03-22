@@ -9,18 +9,18 @@ from __future__ import print_function
 import types
 import numpy as num
 from numpy.linalg import lstsq
-from theif.filters import fset
-from theif.filters import filter
-from theif.filters import vegaB
+from thief.filters import fset
+from thief.filters import filter
+from thief.filters import vegaB
 import scipy.interpolate
 from collections import OrderedDict
 try:
-   import theif.tspack as tspline
+   import thief.tspack as tspline
 except:
    tspline = None
-from theif.utils import deredden
-from theif.utils import mpfit
-from theif.utils.bspline import bspline_basis
+from thief.utils import deredden
+from thief.utils import mpfit
+from thief.utils.bspline import bspline_basis
 import copy
 #from matplotlib import pyplot as plt
 
