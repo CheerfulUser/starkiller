@@ -1,27 +1,30 @@
 from astroquery.svo_fps import SvoFps
 import numpy as np
 import pysynphot as S
-
-bp = SvoFps.get_transmission_data('GAIA/GAIA3.Gbp')
-G = SvoFps.get_transmission_data('GAIA/GAIA3.G')
-rp = SvoFps.get_transmission_data('GAIA/GAIA3.Grp')
-
-mags = [d['gMeanPSFMag'].iloc[i],d['rMeanPSFMag'].iloc[i],d['iMeanPSFMag'].iloc[i]]
-flux = mangle_spectrum2(spec.wave,spec.flux,pb_ps1,mags)
+from thief.mangle_spectrum import mangle_spectrum2
+import os
+package_dir = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 
-def gaia_mangle(spec_files,mags,svo_bp=['GAIA/GAIA3.Gbp','GAIA/GAIA3.G','GAIA/GAIA3.Grp']):
+def cube_mangle(spec_files,mags,svo_bp=['GAIA/GAIA3.Gbp','GAIA/GAIA3.G','GAIA/GAIA3.Grp']):
+	"""
+	Mangle model spectra to input magnitudes and filters. Filters must be given as their SVO designation.
+	"""
 	
 	pbs = load_pbs(svo_filters,0,'AB',SVO=True)
+	mangled = []
+	for spec_file in spec_files:
+		spec = at.Table.read(package_dir + spec_file, format='ascii')
+		spec = S.ArraySpectrum(wave=spec['wave'],
+	                                   flux=spec['flux'],fluxunits='flam')
+		flux = mangle_spectrum2(spec.wave,spec.flux,pbs,mags)
+		spec = S.ArraySpectrum(wave=spec['wave'],
+	                                   flux=flux,fluxunits='flam')
+		mangled += [spec]
+	return mangled
 
 
-model_mags = 0.
-magmodel = 'AB'
-pbs = source_synphot.passband.load_pbs(pbnames, model_mags, magmodel)
-pb_ps1 = source_synphot.passband.load_pbs(pb_ps1, model_mags, magmodel)
-
-
-def get_pb_zpt(pb, reference='AB', model_mag=None):
+def get_pb_zpt(pb, reference='AB', model_mag=0):
 	"""
 	Determines a passband zeropoint for synthetic photometry, given a reference
 	standard and its model magnitude in the passband
