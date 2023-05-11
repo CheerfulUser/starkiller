@@ -1,0 +1,3 @@
+include README.md LICENSE
+include cuber/data/ck_spec/*
+include cuber/data/eso_spec/*
