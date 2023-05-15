@@ -7,14 +7,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.coordinates import SkyCoord
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import sigma_clipped_stats, sigma_clip
 import astropy.units as u
 from astropy.wcs import WCS
 from copy import deepcopy
 
 
 from scipy.ndimage.filters import convolve
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, label
 from copy import deepcopy
 
 from astropy.coordinates import SkyCoord, Angle
@@ -40,7 +40,7 @@ from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
 
 import warnings
-warnings.filterwarnings("ignore") #Shhhhhhh, its okay
+warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 
 
 class cuber():
@@ -83,18 +83,19 @@ class cuber():
 
 		self.image = np.nanmean(self.cube,axis=0)
 		self.image[np.isnan(self.image)] = 0
+		self.bright_mask = self.image > np.percentile(self.image,95)
 
 	def _get_cat(self):
 		self.cat = get_gaia_region([self.ra],[self.dec],size=50)
 		self.cat = self.cat.sort_values('Gmag')
 
 	def _estimate_trail_angle(self,trail):
-		fft = np.fft.fft2(self.image)
+		fft = np.fft.fft2(self.bright_mask)
 		fft = np.fft.fftshift(fft)
 		magnitude_spectrum = np.abs(fft)
 		power_spectrum = np.log10(np.square(magnitude_spectrum))
 
-		peak_threshold = np.percentile(power_spectrum,99)#0.7 * np.max(power_spectrum)
+		peak_threshold = 0.8*np.nanmax(power_spectrum)
 		peaks = np.where(power_spectrum >= peak_threshold)
 
 		py = peaks[1] - np.median(peaks[0])
@@ -127,12 +128,65 @@ class cuber():
 
 		daofind = DAOStarFinder(fwhm=10,theta = self.angle,ratio=.5, threshold=3*std,exclude_border=True)
 		self._dao_s = daofind(blur - med)
+		#if len(self._dao_s) < 2:
+
 		if self.plot:
 			plt.figure()
-			plt.title('Sources found with DAOstarfinder')
+			plt.title('Sources found in image')
 			plt.imshow(self.image,vmin=np.percentile(self.image,16),vmax=np.percentile(self.image,84),origin='lower')
 
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
+
+	def _find_sources_cluster(self):
+
+		labeled, nr_objects = label(self.bright_mask > 0) 
+		obj_size = []
+		for i in range(nr_objects):
+			obj_size += [np.sum(labeled==i)]
+		obj_size = np.array(obj_size)
+		targs = np.where((obj_size > 100) & (obj_size<1e3))[0]
+
+		dy = np.zeros_like(targs)
+		dx = np.zeros_like(targs)
+		my = np.zeros_like(targs)
+		mx = np.zeros_like(targs)
+		sign = np.zeros_like(targs)
+		for i in range(len(targs)):
+			ty,tx = np.where(labeled == targs[i])
+			#x,y = np.average(np.array([tx,ty]).T,weights=self.image[ty,tx],axis=0)
+			my[i] = np.nanmedian(ty)
+			mx[i] = np.nanmedian(tx)
+			dy[i] = np.nanmax(ty) - np.nanmin(ty)
+			dx[i] = np.nanmax(tx) - np.nanmin(tx)
+			#if ty[np.argmin(tx)] > ty[np.argmax(tx)]:
+			sign[i] = np.sign(ty[np.argmax(tx)] - ty[np.argmin(tx)])
+			
+		ind = ~sigma_clip(dx,sigma=2).mask & ~sigma_clip(dy,sigma=2).mask
+		mx = mx[ind]; my = my[ind]; dx = dx[ind]; dy = dy[ind]; sign = sign[ind]
+		ind = ((mx < self.image.shape[1] - np.max(dx)/2) & (mx > np.max(dx)/2) &
+			   (my < self.image.shape[0] - np.max(dy)/2) & (my > np.max(dy)/2))
+		mx = mx[ind]; my = my[ind]; dx = dx[ind]; dy = dy[ind]; sign = sign[ind]
+		if len(mx) < 2:
+			print(f'!!! Only {len(mx)} sources identified, coordinates will not fit!!!')
+		self._dao_s = {'xcentroid':mx,'ycentroid':my}
+
+		isox = np.sqrt(mx[:,np.newaxis] - mx[np.newaxis,:])
+		isox[isox==0] = 900
+		isox = np.nanmin(isox,axis=0)
+		isoy = np.sqrt(my[:,np.newaxis] - my[np.newaxis,:])
+		isoy[isoy==0] = 900
+		isoy = np.nanmin(isoy,axis=0)
+		iso = (isox > np.nanmedian(dx)) & (isoy > np.nanmedian(dy))
+		dx = dx[iso]; dy = dy[iso]; sign = sign[iso]
+		buffer = np.nanmin([np.median(dy),np.median(dx)])
+		
+		self.y_length = int((np.median(dy)+buffer*0.5) // 2)
+		self.x_length = int((np.median(dx)+buffer*0.5) // 2)
+		self._trail_grad = np.nanmedian(dy/dx)
+		self.angle = np.degrees(np.arctan2(self._trail_grad,1))
+		if np.mean(sign) < 0:
+			self.angle *= -1
+		self.trail = np.nanmedian(np.sqrt(dy**2+dx**2))
 
 
 	def _fit_DAO_to_cat(self):
@@ -144,8 +198,8 @@ class cuber():
 
 		catx = x; caty = y
 		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
-
-		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image))
+		bounds = [[-50,50],[-50,50],[0,np.pi/2]]
+		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 
 		xx = x + res.x[0]
 		yy = y + res.x[1]
@@ -159,7 +213,7 @@ class cuber():
 		cut = min_dist(xx,yy,sourcex,sourcey) < 5
 		if self.verbose:
 			print('round 1: ',res.x)
-		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image))
+		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		if self.verbose:
 			print('round 2: ',res.x)
 		self.wcs_shift = res.x
@@ -186,20 +240,22 @@ class cuber():
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Gaia')
 
 	def _identify_cals(self):
-		ind = ((self.cat['x'].values + 20 < self.image.shape[1]) & 
-				(self.cat['y'].values + 20 < self.image.shape[0]) & 
-				(self.cat['x'].values - 20 > 0) & (self.cat['y'].values - 20 > 0))
+		ind = ((self.cat['x'].values + self.x_length/1.8 < self.image.shape[1]) & 
+				(self.cat['y'].values + self.y_length/1.8 < self.image.shape[0]) & 
+				(self.cat['x'].values - self.x_length/1.8 > 0) & 
+				(self.cat['y'].values - self.y_length/1.8 > 0))
 
 		d = np.sqrt((self.cat.x.values[:,np.newaxis] - self.cat.x.values[np.newaxis,:])**2 + 
 					(self.cat.y.values[:,np.newaxis] - self.cat.y.values[np.newaxis,:])**2)
 		d[d==0] = 900
 		d = np.nanmin(d,axis=0)
 		ind2 = d > 10
-
+		
 		self.cat['cal_source'] = 0
 		ind = ind & ind2
 		self.cat['cal_source'].iloc[ind] = 1
 		self.cals = self.cat.iloc[ind]
+		
 
 	def _calc_angle(self):
 		angles_r = []
@@ -260,6 +316,9 @@ class cuber():
 		self.cal_cuts = star_cuts 
 		
 		ind = self.cals.Gmag.values < self.cal_maglim
+		if np.sum(ind) < 1:
+			m = f'{np.sum(ind)} targets above the mag lim, limit must be increased.\n Available mags: {self.cals.Gmag.values}'
+			raise ValueError(m)
 		self.good_cals = good & ind
 
 	def make_psf(self):
@@ -267,7 +326,7 @@ class cuber():
 		good = self.good_cals
 		ct = self.cal_cuts[good]
 		
-		psf = create_psf(self.x_length*2+1,self.y_length*2+1,self.angle*180/np.pi,self.trail)
+		psf = create_psf(self.x_length*2+1,self.y_length*2+1,self.angle,self.trail)
 
 		params = []
 		psfs = []
@@ -298,7 +357,8 @@ class cuber():
 		ind = self.cal_cor > 95
 		for i in ind:
 			diff = self.cal_models[i].sample(self.cal_specs[i].wave) / self.cal_specs[i].flux
-			poly_param = np.polyfit(self.cal_specs[i].wave,diff,order)
+			fin = np.where(np.isfinite(diff))
+			poly_param = np.polyfit(self.cal_specs[i].wave[fin],diff[fin],order)
 			pf = np.polyval(poly_param,self.lam)
 			funcs += [pf]
 		funcs = np.array(funcs)
@@ -350,9 +410,10 @@ class cuber():
 
 
 	def plot_diff(self):
-		image = np.nansum(self.cube,axis=0)
-		scene = np.nansum(self.scene.sim,axis=0)
-		diff = np.nansum(self.diff,axis=0)
+		ind = 1800
+		image = self.cube[ind]#np.nanmedian(self.cube,axis=0)
+		scene = self.scene[ind]#np.nanmedian(self.scene.sim,axis=0)
+		diff = self.diff[ind]#np.nanmedian(self.diff,axis=0)
 
 		vmin = np.nanpercentile(image,10)
 		vmax = np.nanpercentile(image,90)
@@ -362,12 +423,12 @@ class cuber():
 
 		plt.figure(figsize=(12,4))
 		plt.subplot(131)
-		plt.title('MUSE sum',fontsize=15)
+		plt.title('MUSE',fontsize=15)
 		plt.imshow(image,origin='lower',vmin=vmin,vmax=vmax)
 		plt.plot(x,y,'C1.')
 
 		plt.subplot(132)
-		plt.title('Scene sum',fontsize=15)
+		plt.title('Scene',fontsize=15)
 		plt.imshow(scene,origin='lower',vmin=vmin,vmax=vmax)
 		plt.plot(x,y,'C1.')
 
@@ -417,18 +478,19 @@ class cuber():
 		
 		hdul = fits.HDUList([phdu,dhdu,self.hdu[2],mhdu,self._fits_psf])
 
-		hdul.writeto(name)
+		hdul.writeto(name,overwrite=True)
 
 	def run_cube(self,trail=True):
 		self._load_cube()
 		self._get_cat()
-		self._estimate_trail_angle(trail)
-		self._find_sources_DAO()
+		#self._estimate_trail_angle(trail)
+		#self._find_sources_DAO()
+		self._find_sources_cluster()
 		self._fit_DAO_to_cat()
 		self._transform_coords()		
 		self._identify_cals()
-		self._calc_angle()
-		self._calc_length()
+		#self._calc_angle()
+		#self._calc_length()
 		self.make_psf()
 		self.cal_spec()
 		self.fit_spec_residual()

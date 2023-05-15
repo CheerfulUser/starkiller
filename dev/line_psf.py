@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from scipy import signal
 from skimage.util.shape import view_as_windows
-from copy import deepcopy
+
 
 def downSample2d(arr,sf):
     isf2 = 1.0/(sf*sf)
@@ -18,10 +18,8 @@ class create_psf():
         self.beta=beta
         self.chi=None
         self.rate = None
-        self.angle = deepcopy(angle)
-        self.angle_o = deepcopy(angle)
-        self.length = deepcopy(length)
-        self.length_o = deepcopy(length)
+        self.angle = angle
+        self.length = length
         self.source_x = 0
         self.source_y = 0
 
@@ -154,15 +152,15 @@ class create_psf():
             self.line2d=np.array([[1.0]])
 
         #if line_width > 1:
-        #   k = np.zeros((int(line_width),int(line_width)))
-        #   self.line2d = signal.fftconvolve(k,self.line2d,mode='same')
-        #   self.line2d[self.line2d > 0] = 1
+        #    k = np.zeros((int(line_width),int(line_width)))
+        #    self.line2d = signal.fftconvolve(k,self.line2d,mode='same')
+        #    self.line2d[self.line2d > 0] = 1
         #self.longPSF=signal.convolve2d(self.moffProf,self.line2d,mode='same')
-        self.moffProf = self.moffat(self.R-np.min(self.R))
+        self.moffProf=self.moffat(self.R-np.min(self.R))
 
-        self.longPSF = signal.fftconvolve(self.moffProf,self.line2d,mode='same')
-        self.longPSF *= np.sum(self.moffProf)/np.sum(self.longPSF)
-        self.longpsf = downSample2d(self.longPSF,self.repFact)
+        self.longPSF=signal.fftconvolve(self.moffProf,self.line2d,mode='same')
+        self.longPSF*=np.sum(self.moffProf)/np.sum(self.longPSF)
+        self.longpsf=downSample2d(self.longPSF,self.repFact)
         self.longpsf /= np.nansum(self.longpsf)
 
     def psf_fig(self):
@@ -171,6 +169,7 @@ class create_psf():
         plt.colorbar()
 
     def minimizer(self,coeff,image):
+        #print(coeff)
         self.alpha = coeff[0]
         self.beta = coeff[1]
         self.length = coeff[2]
@@ -183,20 +182,16 @@ class create_psf():
 
         diff = abs(image - psf)
         residual = np.nansum(diff)
-
         return np.exp(np.nansum(residual))
 
  
 
-    def fit_psf(self,image,limx=10,limy=10):
+    def fit_psf(self,image,limx=4,limy=4):
 
         normimage = image / np.nansum(image)
 
         coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
-        anglebs = [self.angle_o*0.6,self.angle_o*1.4]
-        lims = [[.1,20],[1,20],[self.length_o*0.6,self.length_o*1.4],
-                [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
-        #lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
+        lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
         res = minimize(self.minimizer, coeff, args=normimage, method='Powell',bounds=lims)
         self.psf_fit = res
 
