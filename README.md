@@ -12,6 +12,11 @@ ifu = cuber(file='filename',cal_maglim=20,run=True)
 
 ![plot](./figs/2I_MUSE_example.png)
 
+Example of a star spectral fit:
+
+![plot](./figs/spec_fit_example.png)
+
+
 
 # Current limitations
 * Matching IFUs with bad spatial WCS solutions to Gaia can sometimes fall over.
