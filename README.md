@@ -31,6 +31,7 @@ Example of a star spectral fit:
 * If stars are very long streaks that are not contained on the detector the WCS matching and PSF fitting may struggle.
 * Need to add in a method for inputting custom source catalogues.
 * Spectral fits aren't perfect, but currently do a good enough job.
+* Need a better package name! 
 
 
 
