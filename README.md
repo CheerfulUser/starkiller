@@ -5,7 +5,7 @@ The output fits file has the format:
  - extension 1: differenced cube
  - extension 2: error cube
  - extension 3: fits table for PSF parameters
- 
+
 
 To install:
 `pip install git+https://github.com/CheerfulUser/cube_scene.git`
@@ -30,6 +30,7 @@ Example of a star spectral fit:
 * Need to add simultaneous PSF fitting for close sources.
 * If stars are very long streaks that are not contained on the detector the WCS matching and PSF fitting may struggle.
 * Need to add in a method for inputting custom source catalogues.
+* Spectral fits aren't perfect, but currently do a good enough job.
 
 
 
