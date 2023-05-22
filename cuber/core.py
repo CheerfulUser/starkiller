@@ -38,6 +38,7 @@ from scipy import signal
 from .helpers import *
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
+import pysynphot as S
 
 import warnings
 warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
@@ -82,8 +83,8 @@ class cuber():
 		self.lam *= 1e10 # convert to Angst
 
 		self.image = np.nanmean(self.cube,axis=0)
-		self.image[np.isnan(self.image)] = 0
-		self.bright_mask = self.image > np.percentile(self.image,95)
+		#self.image[np.isnan(self.image)] = 0
+		self.bright_mask = self.image > np.nanpercentile(self.image,90)
 
 	def _get_cat(self):
 		self.cat = get_gaia_region([self.ra],[self.dec],size=50)
@@ -133,7 +134,7 @@ class cuber():
 		if self.plot:
 			plt.figure()
 			plt.title('Sources found in image')
-			plt.imshow(self.image,vmin=np.percentile(self.image,16),vmax=np.percentile(self.image,84),origin='lower')
+			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,84),origin='lower')
 
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
 
@@ -144,7 +145,7 @@ class cuber():
 		for i in range(nr_objects):
 			obj_size += [np.sum(labeled==i)]
 		obj_size = np.array(obj_size)
-		targs = np.where((obj_size > 100) & (obj_size<1e3))[0]
+		targs = np.where((obj_size > 100) & (obj_size<1e4))[0]
 
 		dy = np.zeros_like(targs)
 		dx = np.zeros_like(targs)
@@ -177,11 +178,11 @@ class cuber():
 		isoy[isoy==0] = 900
 		isoy = np.nanmin(isoy,axis=0)
 		iso = (isox > np.nanmedian(dx)) & (isoy > np.nanmedian(dy))
-		dx = dx[iso]; dy = dy[iso]; sign = sign[iso]
-		buffer = np.nanmin([np.median(dy),np.median(dx)])
-		
-		self.y_length = int((np.median(dy)+buffer*0.5) // 2)
-		self.x_length = int((np.median(dx)+buffer*0.5) // 2)
+		#dx = dx[iso]; dy = dy[iso]; sign = sign[iso]
+		buffer = np.nanmin([np.nanmedian(dy),np.nanmedian(dx)])
+
+		self.y_length = int((np.nanmedian(dy)+buffer*0.5) / 2)
+		self.x_length = int((np.nanmedian(dx)+buffer*0.5) / 2)
 		self._trail_grad = np.nanmedian(dy/dx)
 		self.angle = np.degrees(np.arctan2(self._trail_grad,1))
 		if np.mean(sign) < 0:
@@ -192,13 +193,13 @@ class cuber():
 	def _fit_DAO_to_cat(self):
 		x0 = [0,0,0]
 
-		ind = self.cat['Gmag'].values < 20
+		ind = len(self._dao_s['xcentroid'])*2 #self.cat['Gmag'].values < 20
 
-		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[ind],self.cat.dec.values[ind],0,0)
+		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[:ind],self.cat.dec.values[:ind],0,0)
 
 		catx = x; caty = y
 		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
-		bounds = [[-50,50],[-50,50],[0,np.pi/2]]
+		bounds = [[-100,100],[-100,100],[0,np.pi/2]]
 		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 
 		xx = x + res.x[0]
@@ -210,9 +211,14 @@ class cuber():
 		#ind = (xx > 0) & (xx < image.shape[1]) & (yy > 0) & (yy < image.shape[0])
 		#xx = xx[ind]; yy = yy[ind]
 
-		cut = min_dist(xx,yy,sourcex,sourcey) < 5
+		cut = min_dist(xx,yy,sourcex,sourcey) < 10
 		if self.verbose:
 			print('round 1: ',res.x)
+			plt.figure()
+			plt.plot(sourcex,sourcey,'*',label='image')
+			plt.plot(x,y,'s',label='orig cat')
+			plt.plot(xx,yy,'+',label='shift cat')
+			plt.legend()
 		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		if self.verbose:
 			print('round 2: ',res.x)
@@ -223,8 +229,13 @@ class cuber():
 		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
 
 		xx,yy = transform_coords(x,y,self.wcs_shift,self.image)
+		ys, xs = np.where(np.isfinite(self.image))
+		d = np.sqrt((xx[:,np.newaxis] - xs[np.newaxis,:])**2 + (yy[:,np.newaxis] - ys[np.newaxis,:])**2)
+		md = np.nanmin(d,axis=1)
+		ind = md < (self.trail / 2)
+		#ind = (xx >= 0 - self.x_length/2) & (xx < self.image.shape[1]) & (yy >= 0) & (yy < self.image.shape[0])
 
-		ind = (xx >= 0) & (xx < self.image.shape[1]) & (yy >= 0) & (yy < self.image.shape[0])
+		#ind2 = np.isfinite(self.image[yy.astype(int),xx.astype(int)])
 
 		self.cat['x'] = xx
 		self.cat['y'] = yy
@@ -235,7 +246,7 @@ class cuber():
 		if self.plot:
 			plt.figure()
 			plt.title('Matching DAO sources with catalogue')
-			plt.imshow(self.image,vmin=0,vmax=10,cmap='gray',origin='lower')
+			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'o',ms=7,label='DAO')
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Gaia')
 
@@ -250,9 +261,9 @@ class cuber():
 		d[d==0] = 900
 		d = np.nanmin(d,axis=0)
 		ind2 = d > 10
-		
+		ind3 = np.isfinite(self.image[self.cat['y'].values.astype(int),self.cat['y'].values.astype(int)])
 		self.cat['cal_source'] = 0
-		ind = ind & ind2
+		ind = ind & ind2 & ind3
 		self.cat['cal_source'].iloc[ind] = 1
 		self.cals = self.cat.iloc[ind]
 		
@@ -270,7 +281,7 @@ class cuber():
 			xint = self.cals.iloc[i]['xint']
 
 			cut = self.image[yint-15:yint+15,xint-15:xint+15]
-			mask = (cut > np.percentile(cut,95)) * 1
+			mask = (cut > np.nanpercentile(cut,95)) * 1
 			py,px = np.where(mask>0) 
 			grad, y0 = np.polyfit(px, py, 1,w=cut[py,px])
 			grads += [grad]
@@ -303,7 +314,7 @@ class cuber():
 			estimate = griddata((x1, y1), newarr.ravel(),
 								(testx,testy),method='linear')
 
-			ind = np.where(np.percentile(estimate[np.isfinite(estimate)],40) > estimate)[0]
+			ind = np.where(np.nanpercentile(estimate[np.isfinite(estimate)],40) > estimate)[0]
 			trail_length = max(np.diff(dpix[ind]))*1.2
 			trails += [trail_length]
 			
@@ -325,12 +336,17 @@ class cuber():
 		self._isolate_cals()
 		good = self.good_cals
 		ct = self.cal_cuts[good]
+		ct -= np.nanmedian(ct,axis=(1,2))[:,np.newaxis,np.newaxis]
 		
 		psf = create_psf(self.x_length*2+1,self.y_length*2+1,self.angle,self.trail)
 
 		params = []
 		psfs = []
-		for j in range(len(ct)):
+		ind = len(ct)
+		print(len(ct))
+		if ind > 3:
+			ind = 3
+		for j in range(ind):
 			psf.fit_psf(ct[j])
 			psf.line()
 			params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
@@ -341,8 +357,17 @@ class cuber():
 				  			  beta=self.psf_param[1],length=self.psf_param[2],angle=self.psf_param[3])
 		self.psf.line()
 
+	def calc_background(self):
+		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat)
+		psf_mask = sim.all_psfs < np.percentile(sim.all_psfs,70)
+		bkg = np.nanmedian(psf_mask * self.cube,axis=(1,2))[:,np.newaxis,np.newaxis]
+		self.bkg = bkg 
+		self.cube -= bkg
+
+
+
 	def cal_spec(self):
-		
+		print(len(self.cals.iloc[self.good_cals]))
 		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam)
 
 		cal_model, cors, ebvs = spec_match(cal_specs,self.cals.iloc[self.good_cals],model_type='ck')
@@ -354,25 +379,37 @@ class cuber():
 	
 	def fit_spec_residual(self,order=3,corr_limit=95):
 		funcs = []
-		ind = self.cal_cor > 95
+		ind = (self.cors > corr_limit) & (self.cat['cal_source'].values)
+
 		for i in ind:
-			diff = self.cal_models[i].sample(self.cal_specs[i].wave) / self.cal_specs[i].flux
+			diff = self.models[i].sample(self.specs[i].wave) / self.specs[i].flux
 			fin = np.where(np.isfinite(diff))
-			poly_param = np.polyfit(self.cal_specs[i].wave[fin],diff[fin],order)
+			poly_param = np.polyfit(self.specs[i].wave[fin],diff[fin],order)
 			pf = np.polyval(poly_param,self.lam)
 			funcs += [pf]
 		funcs = np.array(funcs)
-		self.flux_corr = np.nanmedian(funcs,axis=0)[:,np.newaxis,np.newaxis]
+		self.flux_corr = np.nanmedian(funcs,axis=0)#[:,np.newaxis,np.newaxis]
+		self._rerun_model_fit()
 
+	def _rerun_model_fit(self):
+		for i in range(len(self.specs)):
+			self.specs[i] = S.ArraySpectrum(wave=self.lam,flux=self.specs[i].flux * self.flux_corr,name = self.specs[i].name)
+
+
+		model, cors, ebvs = spec_match(self.specs,self.cat,model_type='ck')
+
+		self.models = model
+		self.cors = cors 
+		self.ebvs = ebvs
 
 	def all_spec(self):
-		specs, residual, cat_off = get_specs(self.cat,self.cube*self.flux_corr,self.x_length,self.y_length,self.psf_param,self.lam)
+		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,self.psf_param,self.lam)
 		self.cat = cat_off
 		self.specs = specs
 
-		cal_model, cors, ebvs = spec_match(specs,self.cat,model_type='ck')
+		model, cors, ebvs = spec_match(specs,self.cat,model_type='ck')
 
-		self.models = cal_model
+		self.models = model
 		self.cors = cors 
 		self.ebvs = ebvs
 		if self.plot:
@@ -404,7 +441,7 @@ class cuber():
 		self.scene = scene
 
 	def difference(self):
-		self.diff = (self.cube * self.flux_corr) - self.scene.sim
+		self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
 		if self.plot:
 			self.plot_diff()
 
@@ -412,7 +449,7 @@ class cuber():
 	def plot_diff(self):
 		ind = 1800
 		image = self.cube[ind]#np.nanmedian(self.cube,axis=0)
-		scene = self.scene[ind]#np.nanmedian(self.scene.sim,axis=0)
+		scene = self.scene.sim[ind]#np.nanmedian(self.scene.sim,axis=0)
 		diff = self.diff[ind]#np.nanmedian(self.diff,axis=0)
 
 		vmin = np.nanpercentile(image,10)
@@ -488,15 +525,28 @@ class cuber():
 		self._find_sources_cluster()
 		self._fit_DAO_to_cat()
 		self._transform_coords()		
+		if self.verbose:
+			print('Coords transformed')
 		self._identify_cals()
 		#self._calc_angle()
 		#self._calc_length()
 		self.make_psf()
-		self.cal_spec()
-		self.fit_spec_residual()
+		if self.verbose:
+			print('Made PSF')
+		self.calc_background()
+		if self.verbose:
+			print('Background subtracted')
+		#self.cal_spec()
 		self.all_spec()
+		if self.verbose:
+			print('Extracted spectra')
+		self.fit_spec_residual()
 		self.make_scene()
+		if self.verbose:
+			print('Made scene')
 		self.difference()
 		self.save_hdu()
+		if self.verbose:
+			print('Saved reduction')
 
 

@@ -157,6 +157,8 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam):
     residual = np.array(res)
     cat['x_offset'] = xoff
     cat['y_offset'] = yoff
+    cat['x'] = cat['xint'].values + xoff
+    cat['y'] = cat['yint'].values + yoff
     for i in range(len(cuts)):
         #flux, res, xoff, yoff = psf_spec(cuts[i],psf_params,num_cores=num_cores)
         spec = S.ArraySpectrum(lam,flux[i]*1e-20,fluxunits='flam',name=cat.iloc[i].Source)

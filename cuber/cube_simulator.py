@@ -28,7 +28,7 @@ class cube_simulator():
     def _cat_fluxes(self,catalogue=None):
         if catalogue is not None:
             self.cat = catalogue
-        counts = 10**(2/5*(self.cat['Gmag'].values + 48.6)) * 1e20 # cgs zp, and MUSE offset
+        counts = 10**(2/5*(self.cat['Gmag'].values + 25)) #* 1e20 # cgs zp, and MUSE offset
         self.cat['counts'] = counts
     
     def _make_super_sample(self):
@@ -39,8 +39,8 @@ class cube_simulator():
     def _create_seeds(self):
         seeds = []
         Seeds = []
-        x = self.cat.xint.values + self.cat.x_offset.values #+ self.padding
-        y = self.cat.yint.values + self.cat.y_offset.values #+ self.padding
+        x = self.cat.x.values #+ self.padding
+        y = self.cat.y.values #+ self.padding
         for i in range(len(self.cat)):
             xind = np.argmin(abs(self.X - x[i]))
             yind = np.argmin(abs(self.Y - y[i]))
@@ -59,8 +59,13 @@ class cube_simulator():
         self.seeds = self.seeds[:,self.padding:-self.padding,self.padding:-self.padding]
         self.all_psfs = np.nansum(self.seeds,axis=0)
         
-        
-        
+    def mag_image(self):
+        self._cat_fluxes()
+        image = np.zeros_like(self.seeds[0])
+        for i in range(len(self.seeds)):
+            image += self.seeds[i] * self.cat['counts'].iloc[i]
+        self.image = image
+    
     def make_scene(self,flux):
 
         for i in range(len(flux)):

@@ -210,7 +210,7 @@ class create_psf():
     def fit_pos(self,image):
         normimage = image / np.nansum(image)
         coeff = [0,0]
-        lims = [[-2,2],[-2,2]]
+        lims = [[-5,5],[-5,5]]
         res = minimize(self.minimize_pos,coeff, args=normimage, method='Powell',bounds=lims)
         self.source_x = res.x[0]
         self.source_y = res.x[1]
