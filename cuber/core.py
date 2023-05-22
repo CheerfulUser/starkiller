@@ -180,6 +180,8 @@ class cuber():
 		iso = (isox > np.nanmedian(dx)) & (isoy > np.nanmedian(dy))
 		#dx = dx[iso]; dy = dy[iso]; sign = sign[iso]
 		buffer = np.nanmin([np.nanmedian(dy),np.nanmedian(dx)])
+		#if buffer < 20:
+		buffer = 20
 
 		self.y_length = int((np.nanmedian(dy)+buffer*0.5) / 2)
 		self.x_length = int((np.nanmedian(dx)+buffer*0.5) / 2)
@@ -214,11 +216,11 @@ class cuber():
 		cut = min_dist(xx,yy,sourcex,sourcey) < 10
 		if self.verbose:
 			print('round 1: ',res.x)
-			plt.figure()
-			plt.plot(sourcex,sourcey,'*',label='image')
-			plt.plot(x,y,'s',label='orig cat')
-			plt.plot(xx,yy,'+',label='shift cat')
-			plt.legend()
+			#plt.figure()
+			#plt.plot(sourcex,sourcey,'*',label='image')
+			#plt.plot(x,y,'s',label='orig cat')
+			#plt.plot(xx,yy,'+',label='shift cat')
+			#plt.legend()
 		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		if self.verbose:
 			print('round 2: ',res.x)
@@ -251,19 +253,25 @@ class cuber():
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Gaia')
 
 	def _identify_cals(self):
-		ind = ((self.cat['x'].values + self.x_length/1.8 < self.image.shape[1]) & 
-				(self.cat['y'].values + self.y_length/1.8 < self.image.shape[0]) & 
-				(self.cat['x'].values - self.x_length/1.8 > 0) & 
-				(self.cat['y'].values - self.y_length/1.8 > 0))
+		#ind = ((self.cat['x'].values + self.x_length/1.8 < self.image.shape[1]) & 
+		#		(self.cat['y'].values + self.y_length/1.8 < self.image.shape[0]) & 
+		#		(self.cat['x'].values - self.x_length/1.8 > 0) & 
+		#		(self.cat['y'].values - self.y_length/1.8 > 0))
+		ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
+				(self.cat['y'].values.astype(int) < self.image.shape[0]) & 
+				(self.cat['x'].values.astype(int) > 0) & 
+				(self.cat['y'].values.astype(int) > 0))
 
 		d = np.sqrt((self.cat.x.values[:,np.newaxis] - self.cat.x.values[np.newaxis,:])**2 + 
 					(self.cat.y.values[:,np.newaxis] - self.cat.y.values[np.newaxis,:])**2)
 		d[d==0] = 900
 		d = np.nanmin(d,axis=0)
 		ind2 = d > 10
-		ind3 = np.isfinite(self.image[self.cat['y'].values.astype(int),self.cat['y'].values.astype(int)])
+		ind3 = np.isfinite(self.image[self.cat['y'].values[ind].astype(int),self.cat['x'].values[ind].astype(int)])
+
+		ind[ind] = ind3
 		self.cat['cal_source'] = 0
-		ind = ind & ind2 & ind3
+		ind = ind & ind2
 		self.cat['cal_source'].iloc[ind] = 1
 		self.cals = self.cat.iloc[ind]
 		
@@ -309,7 +317,6 @@ class cuber():
 			lx = np.arange(-11,12,2)
 			testx = lx + self.cals['x'].iloc[i]
 			testy = lx*self._trail_grad + self.cals['y'].iloc[i]
-			testyy = lx*-self._trail_grad + self.cals['y'].iloc[i]
 			dpix = np.sqrt((testx[0]-testx)**2+(testy[0]-testy)**2)
 			estimate = griddata((x1, y1), newarr.ravel(),
 								(testx,testy),method='linear')
@@ -336,16 +343,15 @@ class cuber():
 		self._isolate_cals()
 		good = self.good_cals
 		ct = self.cal_cuts[good]
-		ct -= np.nanmedian(ct,axis=(1,2))[:,np.newaxis,np.newaxis]
+		#ct -= np.nanmedian(ct,axis=(1,2))[:,np.newaxis,np.newaxis]
 		
 		psf = create_psf(self.x_length*2+1,self.y_length*2+1,self.angle,self.trail)
 
 		params = []
 		psfs = []
 		ind = len(ct)
-		print(len(ct))
-		if ind > 3:
-			ind = 3
+		if ind > 5:
+			ind = 5
 		for j in range(ind):
 			psf.fit_psf(ct[j])
 			psf.line()
@@ -367,7 +373,6 @@ class cuber():
 
 
 	def cal_spec(self):
-		print(len(self.cals.iloc[self.good_cals]))
 		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam)
 
 		cal_model, cors, ebvs = spec_match(cal_specs,self.cals.iloc[self.good_cals],model_type='ck')
@@ -379,9 +384,12 @@ class cuber():
 	
 	def fit_spec_residual(self,order=3,corr_limit=95):
 		funcs = []
-		ind = (self.cors > corr_limit) & (self.cat['cal_source'].values)
+		cors = deepcopy(self.cors)
+		cors[self.cat['cal_source'].values == 0] = 0
+		cors[(self.cat['cal_source'].values == 1)][~self.good_cals] = 0
 
-		for i in ind:
+		ind = np.argsort(self.cat['Gmag'].values)#(self.cors > corr_limit) & (self.cat['cal_source'].values)
+		for i in ind[:3]:
 			diff = self.models[i].sample(self.specs[i].wave) / self.specs[i].flux
 			fin = np.where(np.isfinite(diff))
 			poly_param = np.polyfit(self.specs[i].wave[fin],diff[fin],order)
@@ -412,6 +420,7 @@ class cuber():
 		self.models = model
 		self.cors = cors 
 		self.ebvs = ebvs
+		self.spec_res = residual
 		if self.plot:
 			self.plot_specs()
 
@@ -441,6 +450,7 @@ class cuber():
 		self.scene = scene
 
 	def difference(self):
+		#self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
 		self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
 		if self.plot:
 			self.plot_diff()

@@ -183,7 +183,7 @@ class create_psf():
 
         diff = abs(image - psf)
         residual = np.nansum(diff)
-
+        self.residual = residual
         return np.exp(np.nansum(residual))
 
  
@@ -194,7 +194,7 @@ class create_psf():
 
         coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
         anglebs = [self.angle_o*0.6,self.angle_o*1.4]
-        lims = [[.1,20],[1,20],[self.length_o*0.6,self.length_o*1.4],
+        lims = [[0.1,100],[1,100],[self.length_o*0.6,self.length_o*1.4],
                 [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
         #lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
         res = minimize(self.minimizer, coeff, args=normimage, method='Powell',bounds=lims)
