@@ -180,8 +180,8 @@ class cuber():
 		iso = (isox > np.nanmedian(dx)) & (isoy > np.nanmedian(dy))
 		#dx = dx[iso]; dy = dy[iso]; sign = sign[iso]
 		buffer = np.nanmin([np.nanmedian(dy),np.nanmedian(dx)])
-		#if buffer < 20:
-		buffer = 20
+		if buffer < 20:
+			buffer = 20
 
 		self.y_length = int((np.nanmedian(dy)+buffer*0.5) / 2)
 		self.x_length = int((np.nanmedian(dx)+buffer*0.5) / 2)
@@ -389,14 +389,15 @@ class cuber():
 		cors[(self.cat['cal_source'].values == 1)][~self.good_cals] = 0
 
 		ind = np.argsort(self.cat['Gmag'].values)#(self.cors > corr_limit) & (self.cat['cal_source'].values)
+		diff = []
 		for i in ind[:3]:
-			diff = self.models[i].sample(self.specs[i].wave) / self.specs[i].flux
-			fin = np.where(np.isfinite(diff))
-			poly_param = np.polyfit(self.specs[i].wave[fin],diff[fin],order)
-			pf = np.polyval(poly_param,self.lam)
-			funcs += [pf]
-		funcs = np.array(funcs)
-		self.flux_corr = np.nanmedian(funcs,axis=0)#[:,np.newaxis,np.newaxis]
+			diff += [self.models[i].sample(self.specs[i].wave) / self.specs[i].flux]
+		diff = np.nanmedian(np.array(diff),axis=0)
+		fin = np.where(np.isfinite(diff))
+		poly_param = np.polyfit(self.lam[fin],diff[fin],order)
+		pf = np.polyval(poly_param,self.lam)
+
+		self.flux_corr = pf#[:,np.newaxis,np.newaxis]
 		self._rerun_model_fit()
 
 	def _rerun_model_fit(self):
