@@ -30,8 +30,6 @@ from astropy.stats import sigma_clipped_stats
 
 from scipy.interpolate import griddata
 
-from trail_psf import create_psf
-
 from joblib import Parallel, delayed
 from scipy import signal
 
@@ -226,7 +224,7 @@ class cuber():
 	def _fit_DAO_to_cat(self,maxiter=5):
 		safety = 0
 		failed = True
-		soucenum = [1,2,3,4,5]
+		sourcenum = [1,2,3,4,5]
 		while (safety < maxiter) & failed:
 			ind = len(self._dao_s['xcentroid'])*sourcenum[safety] #self.cat['Gmag'].values < 20
 			try:
