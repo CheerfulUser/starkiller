@@ -135,7 +135,6 @@ class cuber():
 			plt.figure()
 			plt.title('Sources found in image')
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,84),origin='lower')
-
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
 
 	def _find_sources_cluster(self):
@@ -192,11 +191,8 @@ class cuber():
 		self.trail = np.nanmedian(np.sqrt(dy**2+dx**2))
 
 
-	def _fit_DAO_to_cat(self):
+	def _cat_fitter(self,ind):
 		x0 = [0,0,0]
-
-		ind = len(self._dao_s['xcentroid'])*2 #self.cat['Gmag'].values < 20
-
 		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[:ind],self.cat.dec.values[:ind],0,0)
 
 		catx = x; caty = y
@@ -225,6 +221,28 @@ class cuber():
 		if self.verbose:
 			print('round 2: ',res.x)
 		self.wcs_shift = res.x
+
+
+	def _fit_DAO_to_cat(self,maxiter=5):
+		safety = 0
+		failed = True
+		soucenum = [1,2,3,4,5]
+		while (safety < maxiter) & failed:
+			ind = len(self._dao_s['xcentroid'])*sourcenum[safety] #self.cat['Gmag'].values < 20
+			try:
+				if self.verbose:
+					print(f'Attempting to match sources, round {sourcenum[safety]}')
+				self._cat_fitter(ind)
+				failed = False
+			except:
+				m = 'Failed fitting sources, inceasing number of sources'
+			safety += 1
+		if failed:
+			m = 'Could not match sources, send the data to Ryan!'
+			ValueError(m)
+
+
+		
 
 	def _transform_coords(self):
 
