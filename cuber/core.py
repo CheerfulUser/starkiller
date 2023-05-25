@@ -30,7 +30,7 @@ from astropy.stats import sigma_clipped_stats
 
 from scipy.interpolate import griddata
 
-from line_psf import create_psf
+from trail_psf import create_psf
 
 from joblib import Parallel, delayed
 from scipy import signal
