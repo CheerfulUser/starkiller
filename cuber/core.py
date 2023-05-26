@@ -83,6 +83,7 @@ class cuber():
 		self.image = np.nanmean(self.cube,axis=0)
 		#self.image[np.isnan(self.image)] = 0
 		self.bright_mask = self.image > np.nanpercentile(self.image,90)
+		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
 
 	def _get_cat(self):
 		self.cat = get_gaia_region([self.ra],[self.dec],size=50)
