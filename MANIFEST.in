@@ -1,3 +1,6 @@
 include README.md LICENSE
 include cuber/data/ck_spec/*
+include cuber/data/ck04_stsci/*
 include cuber/data/eso_spec/*
+include cuber/data/t02_st/*
+include cuber/data/griddl-ob-i-line/*
