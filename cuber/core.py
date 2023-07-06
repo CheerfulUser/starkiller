@@ -45,7 +45,7 @@ warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 
 class cuber():
 	def __init__(self,file,trail=True,model_maglim=21,cal_maglim=18,savepath=None,
-				 catalog=None,spec_catalog='ck+',key_filter=None,ref_filter=None,
+				 catalog=None,spec_catalog='ck',key_filter=None,ref_filter=None,
 				 plot=True,run=True,verbose=True,numcores=5,psf_profile='gaussian'):
 		self.file = file
 		self.plot=plot
