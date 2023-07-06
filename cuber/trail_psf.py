@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+from scipy.optimize import minimize, least_squares
 from scipy import signal
 from skimage.util.shape import view_as_windows
 from copy import deepcopy
+from astropy.modeling.functional_models import Gaussian2D
 
 def downSample2d(arr,sf):
     isf2 = 1.0/(sf*sf)
@@ -12,10 +13,12 @@ def downSample2d(arr,sf):
     return windows.sum(3).sum(2)*isf2
 
 class create_psf():
-    def __init__(self,x,y,angle,length,alpha=-1,beta=1.1,repFact=10,verbose=False):
+    def __init__(self,x,y,angle,length,alpha=3.8,beta=4.765,stddev=2,repFact=10,verbose=False,
+                 psf_profile='gaussian'):
         self.A=None
         self.alpha=alpha
         self.beta=beta
+        self.stddev = stddev
         self.chi=None
         self.rate = None
         self.angle = deepcopy(angle)
@@ -24,6 +27,7 @@ class create_psf():
         self.length_o = deepcopy(length)
         self.source_x = 0
         self.source_y = 0
+        self._set_psf_profile(psf_profile)
 
         if type(x)!=type(np.ones(1)):
             self.x=np.arange(x)+0.5
@@ -53,6 +57,7 @@ class create_psf():
 
         self.X=np.arange(len(self.x)*self.repFact)/float(self.repFact)+0.5/self.repFact
         self.Y=np.arange(len(self.y)*self.repFact)/float(self.repFact)+0.5/self.repFact
+        self.XX, self.YY = np.meshgrid(self.X-self.centx,self.Y-self.centy)
         self.Inds=np.zeros((len(self.y)*self.repFact,len(self.x)*self.repFact,2)).astype('int')
         for ii in range(len(self.y)*self.repFact):
             self.Inds[ii,:,1]=np.arange(len(self.x)*self.repFact)
@@ -103,6 +108,14 @@ class create_psf():
         self.psfStars=None
 
 
+    def _set_psf_profile(self,prof):
+        options = ['gaussian','moffat']
+        if prof.lower() in options:
+            self.psf_profile = prof
+        else:
+            m = f'{prof} is not an accepted option. Please choose from: {options}'
+            raise ValueError(m)
+
     def moffat(self,rad):
         """
         Return a moffat profile evaluated at the radii in the input numpy array.
@@ -110,7 +123,12 @@ class create_psf():
 
         #normalized flux profile return 1.-(1.+(rad/self.alpha)**2)**(1.-self.beta)
         a2=self.alpha*self.alpha
-        return (self.beta-1)*(np.pi*a2)*(1.+(rad/self.alpha)**2)**(-self.beta)
+        return (self.beta-1)/(np.pi*a2)*(1.+(rad/self.alpha)**2)**(-self.beta)
+
+    def gauss2d(self,x,y):
+        g2d = Gaussian2D(x_stddev=self.stddev,y_stddev=self.stddev)
+        g = g2d(x,y)
+        return g
 
 
     def line(self,angle=None,length=None,shiftx=0,shifty=0, verbose=False):
@@ -158,10 +176,14 @@ class create_psf():
         #   self.line2d = signal.fftconvolve(k,self.line2d,mode='same')
         #   self.line2d[self.line2d > 0] = 1
         #self.longPSF=signal.convolve2d(self.moffProf,self.line2d,mode='same')
-        self.moffProf = self.moffat(self.R-np.min(self.R))
+        if self.psf_profile == 'gaussian':
+            self.profile = self.gauss2d(self.XX,self.YY)
+        elif self.psf_profile == 'modffat':
+            self.profile = self.moffat(self.R-np.min(self.R))
 
-        self.longPSF = signal.fftconvolve(self.moffProf,self.line2d,mode='same')
-        self.longPSF *= np.sum(self.moffProf)/np.sum(self.longPSF)
+        self.longPSF = signal.fftconvolve(self.profile,self.line2d,mode='same')
+        self.longPSF *= np.sum(self.profile)/np.sum(self.longPSF)
+        self.longPSF /= np.nansum(self.longPSF)
         self.longpsf = downSample2d(self.longPSF,self.repFact)
         self.longpsf /= np.nansum(self.longpsf)
 
@@ -171,33 +193,48 @@ class create_psf():
         plt.colorbar()
 
     def minimizer(self,coeff,image):
-        self.alpha = coeff[0]
-        self.beta = coeff[1]
-        self.length = coeff[2]
-        self.angle = coeff[3]
-        self.source_x = coeff[4]
-        self.source_y = coeff[5]
+        #print(coeff)
+        if self.psf_profile == 'moffat':
+            self.alpha = coeff[0]
+            self.beta = coeff[1]
+            self.length = coeff[2]
+            self.angle = coeff[3]
+            self.source_x = coeff[4]
+            self.source_y = coeff[5]
+        elif self.psf_profile == 'gaussian':
+            self.stddev = coeff[0]
+            self.length = coeff[1]
+            self.angle = coeff[2]
+            self.source_x = coeff[3]
+            self.source_y = coeff[4]
 
         self.line(shiftx = self.source_x, shifty = self.source_y)
         psf = self.longpsf / np.nansum(self.longpsf)
 
         diff = abs(image - psf)
         residual = np.nansum(diff)
-        self.residual = residual
-        return np.exp(np.nansum(residual))
+        #self.residual = residual
+        return np.exp(residual)
 
  
 
     def fit_psf(self,image,limx=10,limy=10):
-
+        image -= np.nanmedian(image)
         normimage = image / np.nansum(image)
-
-        coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
         anglebs = [self.angle_o*0.6,self.angle_o*1.4]
-        lims = [[0.1,100],[1,100],[self.length_o*0.6,self.length_o*1.4],
-                [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
+
+        if self.psf_profile == 'mofatt':
+            coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
+            lims = [[0.1,100],[1,100],[self.length_o*0.6,self.length_o*1.4],
+                    [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
+        elif self.psf_profile == 'gaussian':
+            coeff = [self.stddev,self.length,self.angle,0,0]
+            lims = [[1,20],[self.length_o*0.6,self.length_o*1.4],
+                    [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
         #lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
+        #res = least_squares(self.minimizer,coeff,args=normimage,method='trf',x_scale=0.1)
         res = minimize(self.minimizer, coeff, args=normimage, method='Powell',bounds=lims)
+                        #jac = '2-point',options={'finite_diff_rel_step':0.1})
         self.psf_fit = res
 
     def minimize_pos(self,coeff,image):
@@ -205,7 +242,7 @@ class create_psf():
         psf = self.longpsf / np.nansum(self.longpsf)
         diff = abs(image - psf)
         residual = np.nansum(diff)
-        return np.exp(np.nansum(residual))
+        return np.exp(residual)
         
     def fit_pos(self,image):
         normimage = image / np.nansum(image)
@@ -227,10 +264,15 @@ class create_psf():
             self.line()
         mask = np.zeros_like(self.longpsf)
         mask[self.longpsf > np.nanpercentile(self.longpsf,70)] = 1
-        f0 = np.nansum(image*mask)#[np.nansum(image*mask),0,0]
+        f0 = np.nansum(image*mask)
+        bkg = np.nanmedian(image[~mask.astype(bool)])
+        image = image - bkg
         self.line(shiftx=self.source_x,shifty=self.source_y)
         res = minimize(self.minimize_psf_flux,f0,args=(image),method='Nelder-Mead')
         self.flux = res.x[0]
         self.image_residual = image - self.longpsf*self.flux
         #if output:
         return self.flux, self.image_residual
+
+
+

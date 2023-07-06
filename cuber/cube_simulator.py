@@ -14,6 +14,7 @@ class cube_simulator():
         self.xdim = cube.shape[2] + 2*padding
         self.ydim = cube.shape[1] + 2*padding
         self.sim = np.zeros_like(cube)
+        self.weights = np.zeros_like(cube)
         self.psf = psf
         self.cat = catalogue
         self.repFact = repFact
@@ -71,6 +72,13 @@ class cube_simulator():
         for i in range(len(flux)):
             seed = self.seeds[i]
             self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
+
+    def make_weights(self,weights):
+
+        for i in range(len(weights)):
+            seed = self.seeds[i]
+            seed = (seed > np.percentile(seed,10)) * 1.0
+            self.weights += seed[np.newaxis,:,:] * weights[i][:,np.newaxis,np.newaxis]
 
         
                               

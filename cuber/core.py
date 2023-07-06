@@ -15,6 +15,7 @@ from copy import deepcopy
 
 from scipy.ndimage.filters import convolve
 from scipy.ndimage import gaussian_filter, label
+from scipy.ndimage import shift
 from copy import deepcopy
 
 from astropy.coordinates import SkyCoord, Angle
@@ -43,10 +44,26 @@ warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 
 
 class cuber():
-	def __init__(self,file,trail=True,cal_maglim=18,savepath=None,plot=True,run=True,verbose=True):
+	def __init__(self,file,trail=True,model_maglim=21,cal_maglim=18,savepath=None,
+				 catalog=None,spec_catalog='ck+',key_filter=None,ref_filter=None,
+				 plot=True,run=True,verbose=True,numcores=5,psf_profile='gaussian'):
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim
+		self.model_maglim = model_maglim
+		self.cat = catalog
+		self.numcores = numcores
+		self.spec_cat = spec_catalog
+		self.psf_profile = psf_profile.lower()
+
+		if (key_filter is None) & (catalog is None):
+			self.key_filter = 'G'
+			self.ref_filter = 'G_mag'
+		else:
+			self.key_filter = key_filter + '_mag'
+		
+
+
 		self.verbose = verbose
 		
 		if savepath is not None:
@@ -86,8 +103,49 @@ class cuber():
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
 
 	def _get_cat(self):
-		self.cat = get_gaia_region([self.ra],[self.dec],size=50)
-		self.cat = self.cat.sort_values('Gmag')
+		if self.cat is None:
+			self.cat = get_gaia_region([self.ra],[self.dec],size=50)
+			self.cat = self.cat.sort_values('G_mag')
+			ind = self.cat.G_mag.values < self.model_maglim
+			if self.verbose:
+				print(f'Number of sources brighter than {self.model_maglim}: {sum(ind)}')
+			if np.sum(ind) < 2:
+				m = f'!!! No sources brighter than {self.model_maglim} !!! \nMaximum maglim is {np.min(self.cat.G_mag.values[3])}'
+				raise ValueError(m)
+			self.cat = self.cat.iloc[ind]
+		else:
+			if (self.ref_filter is None):
+				keys = list(self.cat.keys())
+				f = []
+				for key in keys:
+					if 'filt' in key:
+						f += [key]
+				m = f'No ref_filter defined, selecting first filter in catalog as ref_filter: {f[0]}'
+				self.ref_filter = f[0]
+		self._sort_cat_filts_mags()
+		
+	def _sort_cat_filts_mags(self,cat=None):
+		#if cat is None:
+		cat = self.cat 
+		keys = list(cat.keys())
+		filts = []
+		mags = []
+		if self.key_filter is None:
+			for key in keys:
+				if 'filt' in key:
+					filts += [key]
+					f = key.split('_')[0]
+					mags += [f + '_mag']
+		else:
+			mags = [self.key_filter + '_mag']
+			filts = [self.key_filter + '_filt']
+		filts = cat[filts].iloc[0].values
+		mags = cat[mags].values
+		#if cat is None:
+		self.filts = filts
+		self.mags = mags
+		#else:
+		#	return filts, mags
 
 	def _estimate_trail_angle(self,trail):
 		fft = np.fft.fft2(self.bright_mask)
@@ -209,8 +267,6 @@ class cuber():
 		#xx = xx[ind]; yy = yy[ind]
 
 		cut = min_dist(xx,yy,sourcex,sourcey) < 10
-		if self.verbose:
-			print('round 1: ',res.x)
 			#plt.figure()
 			#plt.plot(sourcex,sourcey,'*',label='image')
 			#plt.plot(x,y,'s',label='orig cat')
@@ -218,27 +274,79 @@ class cuber():
 			#plt.legend()
 		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		if self.verbose:
-			print('round 2: ',res.x)
+			print('wcs shift: ',res.x)
 		self.wcs_shift = res.x
 
+	def _match_by_shift(self):
+		labeled, nr_objects = label(self.bright_mask > 0) 
+		obj_size = []
+		for i in range(nr_objects):
+			obj_size += [np.sum(labeled==i)]
+		obj_size = np.array(obj_size)
+		targs = np.where((obj_size > 100) & (obj_size<1e4))[0]
+		ims = []
+		for i in range(len(targs)):
+			ims += [(labeled == targs[i])*1.0]
+		ims = np.array(ims)
+		ind = ~sigma_clip(np.sum(ims,axis=(1,2)),sigma=2).mask
+		
+		ix = self.cube.shape[2] /2
+		iy = self.cube.shape[1] /2
+		cims = deepcopy(ims[ind])
+		for i in range(len(cims)):
+			ty,tx = np.where(cims[i] > 0)
+			my = np.nanmedian(ty)
+			mx = np.nanmedian(tx)
+			sx = ix - mx; sy = iy - my
+			cims[i] = shift(cims[i],[sy,sx])
+		im = (np.nansum(ims,axis=0) > 0) * 1.
+		im[im==0] = np.nan
+		s = (np.nanmedian(cims,axis=0) > 0.5) * 1.
+		ty,tx = np.where(s > 0)
+		s = s[min(ty)-3:max(ty)+4,min(tx)-3:max(tx)+4]
+		
+		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
+		# brute force it
+		X,Y = np.meshgrid(np.arange(-100,100,10),np.arange(-100,100,10))
+		positions = np.vstack([X.ravel(), Y.ravel(),X.ravel()*0]).T
+		res = []
+		for p in positions:
+			guess = basic_image(p,x,y,im,s)
+			res += [np.nansum(im - guess)]
+		res = np.array(res)
 
-	def _fit_DAO_to_cat(self,maxiter=5):
-		safety = 0
-		failed = True
-		sourcenum = [1,2,3,4,5]
-		while (safety < maxiter) & failed:
-			ind = len(self._dao_s['xcentroid'])*sourcenum[safety] #self.cat['Gmag'].values < 20
-			try:
-				if self.verbose:
-					print(f'Attempting to match sources, round {sourcenum[safety]}')
-				self._cat_fitter(ind)
-				failed = False
-			except:
-				m = 'Failed fitting sources, inceasing number of sources'
-			safety += 1
-		if failed:
-			m = 'Could not match sources, send the data to Ryan!'
-			ValueError(m)
+		ind = np.argmin(res)
+		x0 = positions[ind]
+		bounds = [[x0[0]-10,x0[0]+10],[x0[1]-10,x0[1]+10],[0,np.pi/2]]
+		res2 = minimize(minimize_cats,x0,args=(x,y,im,s),method='Nelder-Mead',bounds=bounds)
+		if self.verbose:
+			print('wcs shift: ',res2.x)
+
+		self.wcs_shift = res2.x
+
+
+
+	def _fit_DAO_to_cat(self,maxiter=5,method='shift'):
+		if method.lower() == 'dist':
+			safety = 0
+			failed = True
+			sourcenum = [1,2,3,4,5]
+			while (safety < maxiter) & failed:
+				ind = len(self._dao_s['xcentroid'])*sourcenum[safety] #self.cat['Gmag'].values < 20
+				try:
+					if self.verbose:
+						print(f'Attempting to match sources, round {sourcenum[safety]}')
+					self._cat_fitter(ind)
+					failed = False
+				except:
+					m = 'Failed fitting sources, inceasing number of sources'
+				safety += 1
+			if failed:
+				m = 'Could not match sources, send the data to Ryan!'
+				ValueError(m)
+
+		if method.lower() == 'shift':
+			self._match_by_shift()
 
 
 		
@@ -264,10 +372,22 @@ class cuber():
 		
 		if self.plot:
 			plt.figure()
-			plt.title('Matching DAO sources with catalogue')
+			plt.title('Matching cube sources with catalogue')
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'o',ms=7,label='DAO')
-			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Gaia')
+			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
+
+	def _mag_isolation(self,dmag=3):
+		mags = self.cat[self.ref_filter].values
+		dmags = mags[:,np.newaxis] - mags[np.newaxis,:]
+		ind = dmags > dmag
+		d = np.sqrt((self.cat.x.values[:,np.newaxis] - self.cat.x.values[np.newaxis,:])**2 + 
+					(self.cat.y.values[:,np.newaxis] - self.cat.y.values[np.newaxis,:])**2)
+		d[ind] = 1e3
+		d[d==0] = 1e3
+		d = np.nanmin(d,axis=0)
+		return d
+
 
 	def _identify_cals(self):
 		#ind = ((self.cat['x'].values + self.x_length/1.8 < self.image.shape[1]) & 
@@ -279,19 +399,55 @@ class cuber():
 				(self.cat['x'].values.astype(int) > 0) & 
 				(self.cat['y'].values.astype(int) > 0))
 
-		d = np.sqrt((self.cat.x.values[:,np.newaxis] - self.cat.x.values[np.newaxis,:])**2 + 
-					(self.cat.y.values[:,np.newaxis] - self.cat.y.values[np.newaxis,:])**2)
-		d[d==0] = 900
-		d = np.nanmin(d,axis=0)
+		d = self._mag_isolation()
 		ind2 = d > 10
 		ind3 = np.isfinite(self.image[self.cat['y'].values[ind].astype(int),self.cat['x'].values[ind].astype(int)])
+		ind4 = self.cat[self.ref_filter].values <= self.cal_maglim
 
 		ind[ind] = ind3
 		self.cat['cal_source'] = 0
-		ind = ind & ind2
+		ind = ind & ind2 & ind4
 		self.cat['cal_source'].iloc[ind] = 1
 		self.cals = self.cat.iloc[ind]
-		
+	
+	def complex_isolation_cals(self,xdist=8):
+	    xx = self.cat.xint.values; yy = self.cat.yint.values
+	    ang = np.radians(self.angle)
+	    cx = self.image.shape[1]/2; cy = self.image.shape[0]/2
+	    xxx = cx + ((xx-cx)*np.cos(ang)-(yy-cy)*np.sin(ang))
+	    yyy = cy + ((xx-cx)*np.sin(ang)+(yy-cy)*np.cos(ang))
+	    
+	    dmag = 2
+	    mags = self.cat[self.ref_filter].values
+	    dmags = mags[:,np.newaxis] - mags[np.newaxis,:]
+	    ind = dmags > dmag
+
+	    dy = abs(yyy[:,np.newaxis] - yyy[np.newaxis,:])
+	    dy[dy==0] = 1e3
+	    dy[ind] = 1e3
+
+	    dx = abs(xxx[:,np.newaxis] - xxx[np.newaxis,:])
+	    dx[dx==0] = 1e3
+	    dx[ind] = 1e3
+	    
+	    iy,ix = np.where(dx > xdist)
+	    dy[iy,ix] = 1e3
+	    iy,ix = np.where(dx < xdist)
+	    ii = dy[iy,ix] > self.trail*1.2
+	    dx[iy[ii],ix[ii]] = 1e3
+	    dy[iy[ii],ix[ii]] = 1e3
+	    isoind = (np.nanmin(dy,axis=0) > self.trail*1.2) & (mags <self.cal_maglim)
+
+	    ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
+				(self.cat['y'].values.astype(int) < self.image.shape[0]) & 
+				(self.cat['x'].values.astype(int) > 0) & 
+				(self.cat['y'].values.astype(int) > 0))
+
+	    self.cat['cal_source'] = 0 
+	    self.cat['cal_source'].iloc[isoind & ind] = 1
+	    self.cals = self.cat.iloc[ind & isoind]
+	    
+
 
 	def _calc_angle(self):
 		angles_r = []
@@ -350,9 +506,9 @@ class cuber():
 		star_cuts, good = get_star_cuts(self.x_length,self.y_length,self.image,self.cals)
 		self.cal_cuts = star_cuts 
 		
-		ind = self.cals.Gmag.values < self.cal_maglim
+		ind = self.cals[self.ref_filter].values < self.cal_maglim
 		if np.sum(ind) < 1:
-			m = f'{np.sum(ind)} targets above the mag lim, limit must be increased.\n Available mags: {self.cals.Gmag.values}'
+			m = f'{np.sum(ind)} targets above the mag lim, limit must be increased.\n Available mags: {self.cals[self.ref_filter].values}'
 			raise ValueError(m)
 		self.good_cals = good & ind
 
@@ -367,32 +523,46 @@ class cuber():
 		params = []
 		psfs = []
 		ind = len(ct)
-		if ind > 5:
-			ind = 5
+		#if ind > 5:
+		#	ind = 5
 		for j in range(ind):
 			psf.fit_psf(ct[j])
 			psf.line()
-			params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
+			if self.psf_profile == 'moffat':
+				params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
+			elif self.psf_profile =='gaussian':
+				params += [np.array([psf.stddev,psf.length,psf.angle])]
 			psfs += [psf.longpsf]
 		params = np.array(params)
 		self.psf_param = np.nanmedian(params,axis=0)
-		self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=self.psf_param[0],
-				  			  beta=self.psf_param[1],length=self.psf_param[2],angle=self.psf_param[3])
+		if self.psf_profile == 'moffat':
+			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=self.psf_param[0],
+					  			  beta=self.psf_param[1],length=self.psf_param[2],angle=self.psf_param[3],
+					  			  psf_profile=self.psf_profile)
+		elif self.psf_profile == 'gaussian':
+			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,stddev=self.psf_param[0],length=self.psf_param[1],angle=self.psf_param[2],
+					  			  psf_profile=self.psf_profile)
 		self.psf.line()
 
 	def calc_background(self):
 		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat)
-		psf_mask = sim.all_psfs < np.percentile(sim.all_psfs,70)
-		bkg = np.nanmedian(psf_mask * self.cube,axis=(1,2))[:,np.newaxis,np.newaxis]
+		psf_mask = (sim.all_psfs < np.nanpercentile(sim.all_psfs,70)) * 1.
+		psf_mask[psf_mask ==0] = np.nan
+		m = (self.cube < np.nanpercentile(psf_mask * self.cube,99,axis=(1,2))[:,np.newaxis,np.newaxis]) * 1.
+		m[m==0] = np.nan
+		
+		bkg = np.nanmedian(psf_mask * self.cube * m,axis=(1,2))[:,np.newaxis,np.newaxis]
+		self.bkgstd = (np.nanmedian(psf_mask * self.cube * m,axis=(1,2))).astype(int)
 		self.bkg = bkg 
 		self.cube -= bkg
 
 
 
-	def cal_spec(self):
-		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam)
 
-		cal_model, cors, ebvs = spec_match(cal_specs,self.cals.iloc[self.good_cals],model_type='ck')
+	def cal_spec(self):
+		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
+
+		cal_model, cors, ebvs = spec_match(cal_specs,self.mags[self.good_cals],self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 		
 		self.cal_specs = cal_specs	
 		self.cal_models = cal_model
@@ -405,9 +575,10 @@ class cuber():
 		cors[self.cat['cal_source'].values == 0] = 0
 		cors[(self.cat['cal_source'].values == 1)][~self.good_cals] = 0
 
-		ind = np.argsort(self.cat['Gmag'].values)#(self.cors > corr_limit) & (self.cat['cal_source'].values)
+		ind = np.argsort(self.cat[self.ref_filter].values)#
+		conds = (self.cors[ind] > corr_limit) & (self.cat['cal_source'].values[ind])
 		diff = []
-		for i in ind[:3]:
+		for i in ind[conds]:
 			diff += [self.models[i].sample(self.specs[i].wave) / self.specs[i].flux]
 		diff = np.nanmedian(np.array(diff),axis=0)
 		fin = np.where(np.isfinite(diff))
@@ -422,18 +593,21 @@ class cuber():
 			self.specs[i] = S.ArraySpectrum(wave=self.lam,flux=self.specs[i].flux * self.flux_corr,name = self.specs[i].name)
 
 
-		model, cors, ebvs = spec_match(self.specs,self.cat,model_type='ck')
+		model, cors, ebvs = spec_match(self.specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 
 		self.models = model
 		self.cors = cors 
 		self.ebvs = ebvs
+		if self.plot:
+			self.plot_specs()
 
 	def all_spec(self):
-		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,self.psf_param,self.lam)
+		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
 		self.cat = cat_off
 		self.specs = specs
+		self._sort_cat_filts_mags()
 
-		model, cors, ebvs = spec_match(specs,self.cat,model_type='ck')
+		model, cors, ebvs = spec_match(specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 
 		self.models = model
 		self.cors = cors 
@@ -449,21 +623,23 @@ class cuber():
 		for i in range(len(specs)):
 			plt.figure()
 			plt.title(f'{specs[i].name} cor = {np.round(self.cors[i],2)}')
-			plt.plot(specs[i].wave,specs[i].flux,label='MUSE')
-			plt.plot(model[i].wave,model[i].flux,'--',label='ck ' + model[i].name)
+			plt.plot(specs[i].wave,specs[i].flux * 1e16,label='IFU')
+			plt.plot(model[i].wave,model[i].flux * 1e16,'--',label= model[i].name,alpha=0.5)
 			
 			plt.xlim(min(specs[i].wave)*0.9,max(specs[i].wave)*1.1)
-			plt.ylabel(r'Flux [$\rm erg/s/cm^2/\AA$]')
+			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
 			plt.xlabel(r'Wavelength ($\rm \AA$)')
-			plt.legend()
-			plt.savefig(f'{self.savepath}spec_figs/{self.cat.Source.iloc[i]}.pdf')
+			plt.legend(loc='upper left')
+			plt.savefig(f'{self.savepath}spec_figs/{self.cat.id.iloc[i]}.pdf')
 			plt.close()
 
 	def make_scene(self):
 		scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat)
 		flux = []
 		for i in range(len(self.cat)):
-			flux += [self.models[i].sample(self.lam)*1e20]
+			#f = downsample_spec(self.models[i],self.lam)
+			f = self.models[i].sample(self.lam)
+			flux += [f*1e20]
 		scene.make_scene(flux)
 		self.scene = scene
 
@@ -488,7 +664,7 @@ class cuber():
 
 		plt.figure(figsize=(12,4))
 		plt.subplot(131)
-		plt.title('MUSE',fontsize=15)
+		plt.title('IFU',fontsize=15)
 		plt.imshow(image,origin='lower',vmin=vmin,vmax=vmax)
 		plt.plot(x,y,'C1.')
 
@@ -498,7 +674,7 @@ class cuber():
 		plt.plot(x,y,'C1.')
 
 		plt.subplot(133)
-		plt.title('MUSE - Scene',fontsize=15)
+		plt.title('IFU - Scene',fontsize=15)
 		plt.imshow(diff,origin='lower',vmin=vmin,vmax=vmax)
 		plt.plot(x,y,'C1.')
 
@@ -509,6 +685,7 @@ class cuber():
 	def _update_header(self):
 		self.header0['DIFF'] = ('True', 'scene difference')
 		self.header0['FlUX_COR'] = ('True', 'flux corrected')
+		self.header0['PSF_PROF'] = (self.psf_profile,'PSF profile used')
 		self.header1['DIFF'] = ('True', 'scene difference')
 		self.header2 = deepcopy(self.hdu[2].header)
 		self.header2['EXTNAME'] = ('MASK','this extension contains star mask')
@@ -520,10 +697,16 @@ class cuber():
 
 
 	def _make_psf_bin(self):
-		rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
-							np.array([self.psf_param[2]]),np.array([self.psf_param[3]])],
-							formats='float32,float32,float32,float32',
-							names='alpha,beta,length,angle')
+		if self.psf_profile == 'moffat':
+			rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
+								np.array([self.psf_param[2]]),np.array([self.psf_param[3]])],
+								formats='float32,float32,float32,float32',
+								names='alpha,beta,length,angle')
+		elif self.psf_profile == 'gaussian':
+			rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
+								np.array([self.psf_param[2]])],
+								formats='float32,float32,float32',
+								names='stddev,length,angle')
 		hdu = fits.BinTableHDU(data=rec)
 		hdu.header['HDUCLAS1'] = ('TABLE','Image data format')
 		hdu.header['HDUCLAS2'] = ('PSF','this extension contains paf params')
@@ -555,9 +738,8 @@ class cuber():
 		self._transform_coords()		
 		if self.verbose:
 			print('Coords transformed')
-		self._identify_cals()
-		#self._calc_angle()
-		#self._calc_length()
+		#self._identify_cals()
+		self.complex_isolation_cals()
 		self.make_psf()
 		if self.verbose:
 			print('Made PSF')
