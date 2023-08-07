@@ -164,7 +164,7 @@ def psf_spec(cube,psf_param,num_cores=5):
     xoff = trip.source_x; yoff = trip.source_y
     
     
-    #f,r = zip(*Parallel(n_jobs=num_cores)(delayed(trip.psf_flux)(image) for image in cube))
+    #flux,res = zip(*Parallel(n_jobs=num_cores)(delayed(trip.psf_flux)(image) for image in cube))
     flux = []
     res = []
     for image in cube:
@@ -197,9 +197,7 @@ def cube_cutout(cube,cat,x_length,y_length):
 
 
 def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores):
-
     cuts = cube_cutout(cube,cat,x_length,y_length)
-
     ind = np.arange(0,len(cuts)+1)
     #num_cores = multiprocessing.cpu_count() - 3
     specs = []
@@ -208,7 +206,11 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores):
     #cat['y_offset'] = 0
     sub_cube = deepcopy(cube)
     flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf_params) for cut in cuts))
-    #for cut in cuts:
+    #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
+    #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
+    #for i in range(len(cuts)):
+    #    f, r, xo, yo = psf_spec(cuts[i],psf_params)
+    #    flux[i] = f; res[i] = r; xoff[i] = xo; yoff[i] = yo
 
     residual = np.array(res)
     cat['x_offset'] = xoff

@@ -178,7 +178,7 @@ class create_psf():
         #self.longPSF=signal.convolve2d(self.moffProf,self.line2d,mode='same')
         if self.psf_profile == 'gaussian':
             self.profile = self.gauss2d(self.XX,self.YY)
-        elif self.psf_profile == 'modffat':
+        elif self.psf_profile == 'moffat':
             self.profile = self.moffat(self.R-np.min(self.R))
 
         self.longPSF = signal.fftconvolve(self.profile,self.line2d,mode='same')
@@ -244,10 +244,10 @@ class create_psf():
         residual = np.nansum(diff)
         return np.exp(residual)
         
-    def fit_pos(self,image):
+    def fit_pos(self,image,range=5):
         normimage = image / np.nansum(image)
         coeff = [0,0]
-        lims = [[-2,2],[-2,2]]
+        lims = [[-range,range],[-range,range]]
         res = minimize(self.minimize_pos,coeff, args=normimage, method='Powell',bounds=lims)
         self.source_x = res.x[0]
         self.source_y = res.x[1]

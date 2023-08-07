@@ -254,7 +254,7 @@ class cuber():
 
 		catx = x; caty = y
 		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
-		bounds = [[-100,100],[-100,100],[0,np.pi/2]]
+		bounds = [[-10,10],[-10,10],[0,np.pi/2]]
 		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 
 		xx = x + res.x[0]
@@ -351,7 +351,9 @@ class cuber():
 
 		
 
-	def _transform_coords(self):
+	def _transform_coords(self,plot=None):
+		if plot is None:
+			plot = self.plot
 
 		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
 
@@ -370,7 +372,7 @@ class cuber():
 		self.cat['xint'] = (self.cat['x'].values + 0.5).astype(int)
 		self.cat['yint'] = (self.cat['y'].values + 0.5).astype(int)
 		
-		if self.plot:
+		if plot:
 			plt.figure()
 			plt.title('Matching cube sources with catalogue')
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
@@ -522,6 +524,7 @@ class cuber():
 
 		params = []
 		psfs = []
+		shifts = []
 		ind = len(ct)
 		#if ind > 5:
 		#	ind = 5
@@ -530,10 +533,13 @@ class cuber():
 			psf.line()
 			if self.psf_profile == 'moffat':
 				params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
+				shifts += [np.array([psf.source_x,psf.source_y])]
 			elif self.psf_profile =='gaussian':
 				params += [np.array([psf.stddev,psf.length,psf.angle])]
+				shifts += [np.array([psf.source_x,psf.source_y])]
 			psfs += [psf.longpsf]
 		params = np.array(params)
+		shifts = np.array(shifts)
 		self.psf_param = np.nanmedian(params,axis=0)
 		if self.psf_profile == 'moffat':
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=self.psf_param[0],
@@ -543,6 +549,30 @@ class cuber():
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,stddev=self.psf_param[0],length=self.psf_param[1],angle=self.psf_param[2],
 					  			  psf_profile=self.psf_profile)
 		self.psf.line()
+		self._fine_psf_shift(shifts)
+
+	def _fine_psf_shift(self,shifts,plot=None):
+		if plot is None:
+			plot = self.plot
+		print('reshifting coords')
+		sources = self.cat.iloc[self.cat.cal_source.values == 1].iloc[self.good_cals]
+		catx = sources.x.values; caty = sources.y.values
+		sourcex = catx + shifts[:,0]; sourcey = caty + shifts[:,1]
+		bounds = [[-10,10],[-10,10],[0,np.pi/2]]
+		x0 = [0,0,0]
+		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
+		print('shift: ',res.x)
+
+		xx,yy = transform_coords(self.cat.x.values,self.cat.y.values,res.x,self.image)
+		self.cat['x'] = xx
+		self.cat['y'] = yy
+		self.cat['xint'] = (self.cat['x'].values + 0.5).astype(int)
+		self.cat['yint'] = (self.cat['y'].values + 0.5).astype(int)
+		if plot:
+			plt.figure()
+			plt.title('Matched cube')
+			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
+			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 
 	def calc_background(self):
 		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat)
