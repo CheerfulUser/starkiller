@@ -351,7 +351,7 @@ class cuber():
 
 		
 
-	def _transform_coords(self,plot=None):
+	def _transform_coords(self,plot=False):
 		if plot is None:
 			plot = self.plot
 
@@ -643,8 +643,8 @@ class cuber():
 		self.cors = cors 
 		self.ebvs = ebvs
 		self.spec_res = residual
-		if self.plot:
-			self.plot_specs()
+		#if self.plot:
+		#	self.plot_specs()
 
 	def plot_specs(self):
 		self._check_dirs()
@@ -660,8 +660,10 @@ class cuber():
 			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
 			plt.xlabel(r'Wavelength ($\rm \AA$)')
 			plt.legend(loc='upper left')
-			plt.savefig(f'{self.savepath}spec_figs/{self.cat.id.iloc[i]}.pdf')
-			plt.close()
+			plt.savefig(f'{self.savepath}spec_figs/{self.cat.id.iloc[i]}.png',dpi=300)
+			#plt.close()
+			#plt.cla()
+			#plt.clf()
 
 	def make_scene(self):
 		scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat)
@@ -686,8 +688,8 @@ class cuber():
 		scene = self.scene.sim[ind]#np.nanmedian(self.scene.sim,axis=0)
 		diff = self.diff[ind]#np.nanmedian(self.diff,axis=0)
 
-		vmin = np.nanpercentile(image,10)
-		vmax = np.nanpercentile(image,90)
+		vmin = np.nanmean(self.bkg) #np.nanpercentile(image,10)
+		vmax = np.nanmax(self.image) * 0.1 #np.nanpercentile(image,90)
 
 		x = self.cat.xint + self.cat.x_offset
 		y = self.cat.yint + self.cat.y_offset
@@ -709,8 +711,9 @@ class cuber():
 		plt.plot(x,y,'C1.')
 
 		plt.tight_layout()
-		name = self.savepath +  self.file.split('/')[-1].split('.fits')[0] + '_sub.pdf'
-		plt.savefig(name,bbox_inches='tight')
+		name = self.savepath +  self.file.split('/')[-1].split('.fits')[0] + '_sub.png'
+		plt.savefig(name,bbox_inches='tight',dpi=300)
+		#plt.close()
 
 	def _update_header(self):
 		self.header0['DIFF'] = ('True', 'scene difference')

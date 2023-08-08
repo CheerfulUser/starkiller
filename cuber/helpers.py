@@ -160,7 +160,7 @@ def psf_spec(cube,psf_param,num_cores=5):
     else:
         trip = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
                           length=psf_param[1],angle=psf_param[2])
-    trip.fit_pos(np.nanmean(cube,axis=0))
+    trip.fit_pos(np.nanmean(cube,axis=0),range=1)
     xoff = trip.source_x; yoff = trip.source_y
     
     
