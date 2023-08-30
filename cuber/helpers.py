@@ -153,13 +153,19 @@ def replace_cube(cube,cut,x_length,y_length,cat):
     return replace
 
 
-def psf_spec(cube,psf_param,num_cores=5):
+def psf_spec(cube,psf_param,data_psf=None):
+    if data_psf is None:
+        psf_tuning = ''
+    else:
+        psf_tuning = ' data'
     if len(psf_param) > 3:
         trip = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
-                          beta=psf_param[1],length=psf_param[2],angle=psf_param[3])
+                          beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
+                          psf_profile='moffat'+psf_tuning)
     else:
         trip = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
-                          length=psf_param[1],angle=psf_param[2])
+                          length=psf_param[1],angle=psf_param[2],
+                          psf_profile='gaussian'+psf_tuning)
     trip.fit_pos(np.nanmean(cube,axis=0),range=1)
     xoff = trip.source_x; yoff = trip.source_y
     
@@ -167,6 +173,7 @@ def psf_spec(cube,psf_param,num_cores=5):
     #flux,res = zip(*Parallel(n_jobs=num_cores)(delayed(trip.psf_flux)(image) for image in cube))
     flux = []
     res = []
+    trip.data_psf = data_psf
     for image in cube:
         f,r = trip.psf_flux(image)
         flux += [f]
@@ -196,7 +203,7 @@ def cube_cutout(cube,cat,x_length,y_length):
 
 
 
-def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores):
+def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores,data_psf=None):
     cuts = cube_cutout(cube,cat,x_length,y_length)
     ind = np.arange(0,len(cuts)+1)
     #num_cores = multiprocessing.cpu_count() - 3
@@ -205,7 +212,7 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores):
     #cat['x_offset'] = 0
     #cat['y_offset'] = 0
     sub_cube = deepcopy(cube)
-    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf_params) for cut in cuts))
+    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf_params,data_psf) for cut in cuts))
     #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
     #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
     #for i in range(len(cuts)):
@@ -277,7 +284,7 @@ def match_spec_to_model(spec,catalog='ck+'):
             print('ck ',model.name)
             print('comparing precise models')
             temp = int(model.name.split('_')[-2])
-            if temp <= 8000:
+            if temp <= 7000:
                 path = f'{package_directory}data/t02_st/*'
                 model_files = np.array(glob(path))
                 

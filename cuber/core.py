@@ -46,7 +46,8 @@ warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 class cuber():
 	def __init__(self,file,trail=True,model_maglim=21,cal_maglim=18,savepath=None,
 				 catalog=None,spec_catalog='ck',key_filter=None,ref_filter=None,
-				 plot=True,run=True,verbose=True,numcores=5,psf_profile='gaussian'):
+				 psf_profile='gaussian',psf_preference='data',
+				 plot=True,run=True,verbose=True,numcores=5):
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim
@@ -55,6 +56,7 @@ class cuber():
 		self.numcores = numcores
 		self.spec_cat = spec_catalog
 		self.psf_profile = psf_profile.lower()
+		self.psf_preference = psf_preference.lower()
 
 		if (key_filter is None) & (catalog is None):
 			self.key_filter = 'G'
@@ -505,12 +507,13 @@ class cuber():
 		self.x_length = abs(int(self.trail/2 * np.cos(self.angle)))
 				
 	def _isolate_cals(self):
-		star_cuts, good = get_star_cuts(self.x_length,self.y_length,self.image,self.cals)
+		cals = self.cat.iloc[self.cat['cal_source'].values == 1]
+		star_cuts, good = get_star_cuts(self.x_length,self.y_length,self.image,cals)
 		self.cal_cuts = star_cuts 
 		
-		ind = self.cals[self.ref_filter].values < self.cal_maglim
+		ind = cals[self.ref_filter].values < self.cal_maglim
 		if np.sum(ind) < 1:
-			m = f'{np.sum(ind)} targets above the mag lim, limit must be increased.\n Available mags: {self.cals[self.ref_filter].values}'
+			m = f'{np.sum(ind)} targets above the mag lim, limit must be increased.\n Available mags: {cals[self.ref_filter].values}'
 			raise ValueError(m)
 		self.good_cals = good & ind
 
@@ -550,6 +553,17 @@ class cuber():
 					  			  psf_profile=self.psf_profile)
 		self.psf.line()
 		self._fine_psf_shift(shifts)
+		self.complex_isolation_cals()
+		self._isolate_cals()
+		self.psf.make_data_psf(self.cal_cuts)
+		self._check_psf_quality()
+
+	def _check_psf_quality(self):
+		diff = np.sum(abs(self.psf.data_psf-self.psf.longpsf))
+		if (diff > 0.1) & (self.psf_preference=='data'):
+			m = (f"!!! Large difference of {np.round(diff,2)} between model_psf and data_psf!!!\nUsing the data_psf, override by setting psf_preference='model'")
+			print(m)
+			self.psf_profile += ' data'
 
 	def _fine_psf_shift(self,shifts,plot=None):
 		if plot is None:
@@ -575,7 +589,11 @@ class cuber():
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 
 	def calc_background(self):
-		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat)
+		if 'data' in self.psf_profile:
+			data = True
+		else:
+			data = False
+		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat,datapsf=data)
 		psf_mask = (sim.all_psfs < np.nanpercentile(sim.all_psfs,70)) * 1.
 		psf_mask[psf_mask ==0] = np.nan
 		m = (self.cube < np.nanpercentile(psf_mask * self.cube,99,axis=(1,2))[:,np.newaxis,np.newaxis]) * 1.
@@ -632,7 +650,12 @@ class cuber():
 			self.plot_specs()
 
 	def all_spec(self):
-		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
+		data_psf = None
+		if 'data' in self.psf_profile:
+			data_psf = self.psf.data_psf
+		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,
+											 self.psf_param,self.lam,num_cores=self.numcores,
+											 data_psf=data_psf)
 		self.cat = cat_off
 		self.specs = specs
 		self._sort_cat_filts_mags()
@@ -666,7 +689,11 @@ class cuber():
 			#plt.clf()
 
 	def make_scene(self):
-		scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat)
+		if 'data' in self.psf_profile:
+			data = True
+		else:
+			data = False
+		scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data)
 		flux = []
 		for i in range(len(self.cat)):
 			#f = downsample_spec(self.models[i],self.lam)
@@ -730,16 +757,17 @@ class cuber():
 
 
 	def _make_psf_bin(self):
-		if self.psf_profile == 'moffat':
+		if 'moffat' in self.psf_profile:
 			rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
 								np.array([self.psf_param[2]]),np.array([self.psf_param[3]])],
 								formats='float32,float32,float32,float32',
 								names='alpha,beta,length,angle')
-		elif self.psf_profile == 'gaussian':
+		elif 'gaussian' in self.psf_profile:
 			rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
 								np.array([self.psf_param[2]])],
 								formats='float32,float32,float32',
 								names='stddev,length,angle')
+
 		hdu = fits.BinTableHDU(data=rec)
 		hdu.header['HDUCLAS1'] = ('TABLE','Image data format')
 		hdu.header['HDUCLAS2'] = ('PSF','this extension contains paf params')

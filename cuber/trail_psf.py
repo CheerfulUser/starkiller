@@ -5,6 +5,8 @@ from scipy import signal
 from skimage.util.shape import view_as_windows
 from copy import deepcopy
 from astropy.modeling.functional_models import Gaussian2D
+from scipy.ndimage import shift
+from scipy.interpolate import griddata
 
 def downSample2d(arr,sf):
     isf2 = 1.0/(sf*sf)
@@ -13,8 +15,8 @@ def downSample2d(arr,sf):
     return windows.sum(3).sum(2)*isf2
 
 class create_psf():
-    def __init__(self,x,y,angle,length,alpha=3.8,beta=4.765,stddev=2,repFact=10,verbose=False,
-                 psf_profile='gaussian'):
+    def __init__(self,x,y,angle,length,alpha=3.8,beta=4.765,stddev=2,
+                 repFact=10,verbose=False,psf_profile='gaussian'):
         self.A=None
         self.alpha=alpha
         self.beta=beta
@@ -110,7 +112,7 @@ class create_psf():
 
     def _set_psf_profile(self,prof):
         options = ['gaussian','moffat']
-        if prof.lower() in options:
+        if (options[0] in prof.lower()) | (options[1] in prof.lower()):
             self.psf_profile = prof
         else:
             m = f'{prof} is not an accepted option. Please choose from: {options}'
@@ -176,9 +178,9 @@ class create_psf():
         #   self.line2d = signal.fftconvolve(k,self.line2d,mode='same')
         #   self.line2d[self.line2d > 0] = 1
         #self.longPSF=signal.convolve2d(self.moffProf,self.line2d,mode='same')
-        if self.psf_profile == 'gaussian':
+        if 'gaussian' in self.psf_profile:
             self.profile = self.gauss2d(self.XX,self.YY)
-        elif self.psf_profile == 'moffat':
+        elif 'moffat' in self.psf_profile:
             self.profile = self.moffat(self.R-np.min(self.R))
 
         self.longPSF = signal.fftconvolve(self.profile,self.line2d,mode='same')
@@ -194,14 +196,14 @@ class create_psf():
 
     def minimizer(self,coeff,image):
         #print(coeff)
-        if self.psf_profile == 'moffat':
+        if  'moffat' in self.psf_profile:
             self.alpha = coeff[0]
             self.beta = coeff[1]
             self.length = coeff[2]
             self.angle = coeff[3]
             self.source_x = coeff[4]
             self.source_y = coeff[5]
-        elif self.psf_profile == 'gaussian':
+        elif 'gaussian' in self.psf_profile:
             self.stddev = coeff[0]
             self.length = coeff[1]
             self.angle = coeff[2]
@@ -237,6 +239,28 @@ class create_psf():
                         #jac = '2-point',options={'finite_diff_rel_step':0.1})
         self.psf_fit = res
 
+    def make_data_psf(self,data_cuts):
+        medcuts = data_cuts / np.nanmax(data_cuts,axis=(1,2))[:,np.newaxis,np.newaxis]
+        sm = np.zeros_like(medcuts)
+        for i in range(len(medcuts)):
+            self.fit_pos(medcuts[i])
+            sm[i] = shift(medcuts[i],[-self.source_y,-self.source_x],mode='nearest')
+        data_psf = np.nanmedian(sm,axis=0)      
+        self.data_psf = data_psf / np.nansum(data_psf)
+
+        x = np.arange(0,self.data_psf.shape[1])
+        y = np.arange(0,self.data_psf.shape[0])
+        xx, yy = np.meshgrid(x, y)
+        XX, YY = np.meshgrid(self.X-0.5,self.Y-0.5)
+
+        estimate = griddata((xx.ravel(), yy.ravel()), self.data_psf.ravel(),
+                            (XX.ravel(),YY.ravel()),method='linear',fill_value=0)
+
+        estimate = estimate.reshape(len(self.Y),len(self.X))
+        self.data_PSF = estimate / np.nansum(estimate)
+
+
+
     def minimize_pos(self,coeff,image):
         self.line(shiftx = coeff[0], shifty = coeff[1])
         psf = self.longpsf / np.nansum(self.longpsf)
@@ -252,8 +276,7 @@ class create_psf():
         self.source_x = res.x[0]
         self.source_y = res.x[1]
 
-        
-        
+    
         
     def minimize_psf_flux(self,coeff,image):
         res = np.nansum(abs(image - self.longpsf*coeff[0]))
@@ -267,7 +290,13 @@ class create_psf():
         f0 = np.nansum(image*mask)
         bkg = np.nanmedian(image[~mask.astype(bool)])
         image = image - bkg
-        self.line(shiftx=self.source_x,shifty=self.source_y)
+        if 'data' in self.psf_profile:
+            if self.data_psf is not None:
+                self.longpsf = shift(self.data_psf,[self.source_y,self.source_x],mode='nearest')
+            else:
+                raise ValueError('No data psf defined! Use the make_data_psf function first.')
+        else:
+            self.line(shiftx=self.source_x,shifty=self.source_y)
         res = minimize(self.minimize_psf_flux,f0,args=(image),method='Nelder-Mead')
         self.flux = res.x[0]
         self.image_residual = image - self.longpsf*self.flux

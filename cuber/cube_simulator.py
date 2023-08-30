@@ -4,13 +4,13 @@ import numpy as np
 
 
 def downSample2d(arr,sf):
-    isf2 = 1.0/(sf*sf)
+    #isf2 = 1.0/(sf*sf) # Removed this factor since we don't want scaling
     (A,B) = arr.shape
     windows = view_as_windows(arr, (sf,sf), step = sf)
-    return windows.sum(3).sum(2)*isf2
+    return windows.sum(3).sum(2)#*isf2
 
 class cube_simulator():
-    def __init__(self,cube,psf=None,catalogue=None,repFact=10,padding=20):
+    def __init__(self,cube,psf=None,catalogue=None,repFact=10,padding=20,datapsf=False):
         self.xdim = cube.shape[2] + 2*padding
         self.ydim = cube.shape[1] + 2*padding
         self.sim = np.zeros_like(cube)
@@ -19,6 +19,10 @@ class cube_simulator():
         self.cat = catalogue
         self.repFact = repFact
         self.padding = padding
+
+        if datapsf:
+            self.psf.longPSF = self.psf.data_PSF
+            print('Using the data PSF')
 
         self._make_super_sample()
         self._create_seeds()
