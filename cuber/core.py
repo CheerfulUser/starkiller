@@ -698,13 +698,13 @@ class cuber():
 		for i in range(len(self.cat)):
 			#f = downsample_spec(self.models[i],self.lam)
 			f = self.models[i].sample(self.lam)
-			flux += [f*1e20]
+			flux += [f*1e20 / self.flux_corr[:,np.newaxis,np.newaxis]]
 		scene.make_scene(flux)
 		self.scene = scene
 
 	def difference(self):
 		#self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
-		self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
+		self.diff = self.cube - self.scene.sim
 		if self.plot:
 			self.plot_diff()
 
