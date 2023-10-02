@@ -531,16 +531,19 @@ class cuber():
 		ind = len(ct)
 		#if ind > 5:
 		#	ind = 5
-		for j in range(ind):
-			psf.fit_psf(ct[j])
-			psf.line()
-			if self.psf_profile == 'moffat':
-				params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
-				shifts += [np.array([psf.source_x,psf.source_y])]
-			elif self.psf_profile =='gaussian':
-				params += [np.array([psf.stddev,psf.length,psf.angle])]
-				shifts += [np.array([psf.source_x,psf.source_y])]
-			psfs += [psf.longpsf]
+		'''for j in range(ind):
+									psf.fit_psf(ct[j])
+									psf.line()
+									if self.psf_profile == 'moffat':
+										params += [np.array([psf.alpha,psf.beta,psf.length,psf.angle])]
+										shifts += [np.array([psf.source_x,psf.source_y])]
+									elif self.psf_profile =='gaussian':
+										params += [np.array([psf.stddev,psf.length,psf.angle])]
+										shifts += [np.array([psf.source_x,psf.source_y])]
+									psfs += [psf.longpsf]'''
+
+		indo = np.arange(ind)
+		params, shifts = zip(*Parallel(n_jobs=self.numcores)(delayed(parallel_psf_fit)(ct[i],psf,self.psf_profile) for i in indo))
 		params = np.array(params)
 		shifts = np.array(shifts)
 		self.psf_param = np.nanmedian(params,axis=0)
@@ -572,7 +575,7 @@ class cuber():
 		sources = self.cat.iloc[self.cat.cal_source.values == 1].iloc[self.good_cals]
 		catx = sources.x.values; caty = sources.y.values
 		sourcex = catx + shifts[:,0]; sourcey = caty + shifts[:,1]
-		bounds = [[-10,10],[-10,10],[0,np.pi/2]]
+		bounds = [[-15,15],[-15,15],[0,np.pi/2]]
 		x0 = [0,0,0]
 		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		print('shift: ',res.x)
@@ -698,7 +701,8 @@ class cuber():
 		for i in range(len(self.cat)):
 			#f = downsample_spec(self.models[i],self.lam)
 			f = self.models[i].sample(self.lam)
-			flux += [f*1e20 / self.flux_corr[:,np.newaxis,np.newaxis]]
+			flux += [f*1e20 / self.flux_corr]
+		flux = np.array(flux)
 		scene.make_scene(flux)
 		self.scene = scene
 

@@ -231,7 +231,7 @@ class create_psf():
                     [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
         elif self.psf_profile == 'gaussian':
             coeff = [self.stddev,self.length,self.angle,0,0]
-            lims = [[1,20],[self.length_o*0.6,self.length_o*1.4],
+            lims = [[0.1,20],[self.length_o*0.6,self.length_o*1.4],
                     [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
         #lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
         #res = least_squares(self.minimizer,coeff,args=normimage,method='trf',x_scale=0.1)
@@ -247,6 +247,7 @@ class create_psf():
             sm[i] = shift(medcuts[i],[-self.source_y,-self.source_x],mode='nearest')
         data_psf = np.nanmedian(sm,axis=0)      
         self.data_psf = data_psf / np.nansum(data_psf)
+        self.data_psf[self.data_psf < 1e-4] = 0
 
         x = np.arange(0,self.data_psf.shape[1])
         y = np.arange(0,self.data_psf.shape[0])
@@ -257,7 +258,10 @@ class create_psf():
                             (XX.ravel(),YY.ravel()),method='linear',fill_value=0)
 
         estimate = estimate.reshape(len(self.Y),len(self.X))
-        self.data_PSF = estimate / np.nansum(estimate)
+        estimate[estimate < 1e-4] = 0
+        print('estimate shape ',estimate.shape)
+        self.data_PSF = estimate
+
 
 
 

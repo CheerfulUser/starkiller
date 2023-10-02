@@ -371,3 +371,13 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
     cors = np.array(cors)
     return cal_model, cors, ebvs
 
+def parallel_psf_fit(image,psf,psf_profile):
+    psf.fit_psf(image)
+    psf.line()
+    if psf_profile == 'moffat':
+        params = np.array([psf.alpha,psf.beta,psf.length,psf.angle])
+        shifts = np.array([psf.source_x,psf.source_y])
+    elif psf_profile =='gaussian':
+        params = np.array([psf.stddev,psf.length,psf.angle])
+        shifts = np.array([psf.source_x,psf.source_y])
+    return params, shifts
