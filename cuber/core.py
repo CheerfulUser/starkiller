@@ -1,4 +1,6 @@
 import os
+import sys
+import traceback
 from os import path
 #from mangle import *#cube_mangle
 from astropy.io import fits
@@ -44,10 +46,10 @@ warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 
 
 class cuber():
-	def __init__(self,file,trail=True,model_maglim=21,cal_maglim=18,savepath=None,
+	def __init__(self,file,trail=True,model_maglim=21,cal_maglim=19,savepath=None,
 				 catalog=None,spec_catalog='ck',key_filter=None,ref_filter=None,
 				 psf_profile='gaussian',psf_preference='data',
-				 plot=True,run=True,verbose=True,numcores=5):
+				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=True):
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim
@@ -57,6 +59,7 @@ class cuber():
 		self.spec_cat = spec_catalog
 		self.psf_profile = psf_profile.lower()
 		self.psf_preference = psf_preference.lower()
+		self._rerun_cal = rerun_cal
 
 		if (key_filter is None) & (catalog is None):
 			self.key_filter = 'G'
@@ -415,42 +418,43 @@ class cuber():
 		self.cals = self.cat.iloc[ind]
 	
 	def complex_isolation_cals(self,xdist=8):
-	    xx = self.cat.xint.values; yy = self.cat.yint.values
-	    ang = np.radians(self.angle)
-	    cx = self.image.shape[1]/2; cy = self.image.shape[0]/2
-	    xxx = cx + ((xx-cx)*np.cos(ang)-(yy-cy)*np.sin(ang))
-	    yyy = cy + ((xx-cx)*np.sin(ang)+(yy-cy)*np.cos(ang))
-	    
-	    dmag = 2
-	    mags = self.cat[self.ref_filter].values
-	    dmags = mags[:,np.newaxis] - mags[np.newaxis,:]
-	    ind = dmags > dmag
+		xx = self.cat.xint.values; yy = self.cat.yint.values
+		ang = np.radians(self.angle)
+		cx = self.image.shape[1]/2; cy = self.image.shape[0]/2
+		xxx = cx + ((xx-cx)*np.cos(ang)-(yy-cy)*np.sin(ang))
+		yyy = cy + ((xx-cx)*np.sin(ang)+(yy-cy)*np.cos(ang))
+		
+		dmag = 2
+		mags = self.cat[self.ref_filter].values
+		dmags = mags[:,np.newaxis] - mags[np.newaxis,:]
+		ind = dmags > dmag
 
-	    dy = abs(yyy[:,np.newaxis] - yyy[np.newaxis,:])
-	    dy[dy==0] = 1e3
-	    dy[ind] = 1e3
+		dy = abs(yyy[:,np.newaxis] - yyy[np.newaxis,:])
+		dy[dy==0] = 1e3
+		dy[ind] = 1e3
 
-	    dx = abs(xxx[:,np.newaxis] - xxx[np.newaxis,:])
-	    dx[dx==0] = 1e3
-	    dx[ind] = 1e3
-	    
-	    iy,ix = np.where(dx > xdist)
-	    dy[iy,ix] = 1e3
-	    iy,ix = np.where(dx < xdist)
-	    ii = dy[iy,ix] > self.trail*1.2
-	    dx[iy[ii],ix[ii]] = 1e3
-	    dy[iy[ii],ix[ii]] = 1e3
-	    isoind = (np.nanmin(dy,axis=0) > self.trail*1.2) & (mags <self.cal_maglim)
+		dx = abs(xxx[:,np.newaxis] - xxx[np.newaxis,:])
+		dx[dx==0] = 1e3
+		dx[ind] = 1e3
+		
+		iy,ix = np.where(dx > xdist)
+		dy[iy,ix] = 1e3
+		iy,ix = np.where(dx < xdist)
+		ii = dy[iy,ix] > self.trail*1.2
+		dx[iy[ii],ix[ii]] = 1e3
+		dy[iy[ii],ix[ii]] = 1e3
+		isoind = (np.nanmin(dy,axis=0) > self.trail*1.2) & (mags <self.cal_maglim)
 
-	    ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
+		ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
 				(self.cat['y'].values.astype(int) < self.image.shape[0]) & 
 				(self.cat['x'].values.astype(int) > 0) & 
 				(self.cat['y'].values.astype(int) > 0))
-
-	    self.cat['cal_source'] = 0 
-	    self.cat['cal_source'].iloc[isoind & ind] = 1
-	    self.cals = self.cat.iloc[ind & isoind]
-	    
+		indo = np.isfinite(self.image[self.cat['y'].values[ind].astype(int),self.cat['x'].values[ind].astype(int)])
+		ind[ind] = indo
+		self.cat['cal_source'] = 0 
+		self.cat['cal_source'].iloc[isoind & ind] = 1
+		self.cals = self.cat.iloc[ind & isoind]
+		
 
 
 	def _calc_angle(self):
@@ -492,11 +496,11 @@ class cuber():
 
 		for i in range(3):
 			lx = np.arange(-11,12,2)
-			testx = lx + self.cals['x'].iloc[i]
-			testy = lx*self._trail_grad + self.cals['y'].iloc[i]
-			dpix = np.sqrt((testx[0]-testx)**2+(testy[0]-testy)**2)
+			selfx = lx + self.cals['x'].iloc[i]
+			selfy = lx*self._trail_grad + self.cals['y'].iloc[i]
+			dpix = np.sqrt((selfx[0]-selfx)**2+(selfy[0]-selfy)**2)
 			estimate = griddata((x1, y1), newarr.ravel(),
-								(testx,testy),method='linear')
+								(selfx,selfy),method='linear')
 
 			ind = np.where(np.nanpercentile(estimate[np.isfinite(estimate)],40) > estimate)[0]
 			trail_length = max(np.diff(dpix[ind]))*1.2
@@ -547,11 +551,11 @@ class cuber():
 		params = np.array(params)
 		shifts = np.array(shifts)
 		self.psf_param = np.nanmedian(params,axis=0)
-		if self.psf_profile == 'moffat':
+		if 'moffat' in self.psf_profile:
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=self.psf_param[0],
 					  			  beta=self.psf_param[1],length=self.psf_param[2],angle=self.psf_param[3],
 					  			  psf_profile=self.psf_profile)
-		elif self.psf_profile == 'gaussian':
+		elif 'gaussian' in self.psf_profile:
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,stddev=self.psf_param[0],length=self.psf_param[1],angle=self.psf_param[2],
 					  			  psf_profile=self.psf_profile)
 		self.psf.line()
@@ -591,6 +595,55 @@ class cuber():
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 
+	def _psf_isolation(self):
+		psf_mask = (self.psf.longpsf > 1e-5) * 1.
+		y = self.cat.yint.values; x = self.cat.xint.values
+		ind = (y > 0) & (y < self.image.shape[0]) & (x > 0) & (x < self.image.shape[1])
+		x= x[ind];y=y[ind]
+		m = self.cat[self.ref_filter].values[ind]
+		sources = np.zeros((len(y),self.image.shape[0],self.image.shape[1]))
+		sources[np.arange(0,len(y)),y,x] = 1
+		sources = signal.fftconvolve(sources,np.array([psf_mask]),mode='same')
+		sources[sources<0.1] = 0
+
+		isolated = []
+		for i in range(len(x)):
+			if np.sum(sources[i] * (np.sum(sources,axis=0)-sources[i])) > 0:
+				isolated += [False]
+			else:
+				im = deepcopy(self.image)
+				im[np.isfinite(im)] = 1
+				if np.nansum(im * sources[i]) > (np.nansum(sources[i])/2):
+					isolated += [True]
+				else:
+					isolated += [False]
+		isolated = np.array(isolated)
+		isolated[m > self.cal_maglim] = False
+		indo = deepcopy(ind)
+		indo[ind] = isolated
+		self.cat.loc[indo,'cal_source'] = 1
+
+	def _psf_contained_check(self,pad = 20):
+		psf_mask = (self.psf.longpsf > 1e-10) * 1.
+		y = self.cat.yint.values+pad; x = self.cat.xint.values+pad
+		indo = np.zeros_like(x)
+		padded = np.pad(self.image,pad,constant_values=np.nan)
+		ind = (y > 0) & (y < self.image.shape[0]) & (x > 0) & (x < self.image.shape[1])
+		x= x[ind];y=y[ind]
+		m = self.cat[self.ref_filter].values[ind]
+		sources = np.zeros((len(y),self.image.shape[0],self.image.shape[1]))
+		sources[np.arange(0,len(y)),y,x] = 1
+		sources = signal.fftconvolve(sources,np.array([psf_mask]),mode='same')
+		sources[sources<0.1] = 0
+
+		masked = sources * self.image[np.newaxis,:,:]
+		contained = np.nansum(masked,axis=(1,2)) > 0
+		indo[ind] = contained
+		self.cat = self.cat.iloc[indo]
+		self._isolate_cals()
+
+
+
 	def calc_background(self):
 		if 'data' in self.psf_profile:
 			data = True
@@ -621,20 +674,24 @@ class cuber():
 		self.cal_ebv = np.array(ebvs)
 	
 	def fit_spec_residual(self,order=3,corr_limit=95):
-		funcs = []
+		
 		cors = deepcopy(self.cors)
 		cors[self.cat['cal_source'].values == 0] = 0
 		cors[(self.cat['cal_source'].values == 1)][~self.good_cals] = 0
 
 		ind = np.argsort(self.cat[self.ref_filter].values)#
 		conds = (self.cors[ind] > corr_limit) & (self.cat['cal_source'].values[ind])
-		diff = []
-		for i in ind[conds]:
-			diff += [self.models[i].sample(self.specs[i].wave) / self.specs[i].flux]
-		diff = np.nanmedian(np.array(diff),axis=0)
-		fin = np.where(np.isfinite(diff))
-		poly_param = np.polyfit(self.lam[fin],diff[fin],order)
-		pf = np.polyval(poly_param,self.lam)
+		print('conds ',len(conds))
+		if len(conds) > 1:
+			diff = []
+			for i in ind[conds]:
+				diff += [self.models[i].sample(self.specs[i].wave) / self.specs[i].flux]
+			diff = np.nanmedian(np.array(diff),axis=0)
+			fin = np.where(np.isfinite(diff))
+			poly_param = np.polyfit(self.lam[fin],diff[fin],order)
+			pf = np.polyval(poly_param,self.lam)
+		else:
+			pf = np.ones_like(self.lam)
 
 		self.flux_corr = pf#[:,np.newaxis,np.newaxis]
 		self._rerun_model_fit()
@@ -719,8 +776,8 @@ class cuber():
 		scene = self.scene.sim[ind]#np.nanmedian(self.scene.sim,axis=0)
 		diff = self.diff[ind]#np.nanmedian(self.diff,axis=0)
 
-		vmin = np.nanmean(self.bkg) #np.nanpercentile(image,10)
-		vmax = np.nanmax(self.image) * 0.1 #np.nanpercentile(image,90)
+		vmin = np.nanpercentile(image,16)
+		vmax = np.nanpercentile(image,95)
 
 		x = self.cat.xint + self.cat.x_offset
 		y = self.cat.yint + self.cat.y_offset
@@ -794,34 +851,43 @@ class cuber():
 		hdul.writeto(name,overwrite=True)
 
 	def run_cube(self,trail=True):
-		self._load_cube()
-		self._get_cat()
-		#self._estimate_trail_angle(trail)
-		#self._find_sources_DAO()
-		self._find_sources_cluster()
-		self._fit_DAO_to_cat()
-		self._transform_coords()		
-		if self.verbose:
-			print('Coords transformed')
-		#self._identify_cals()
-		self.complex_isolation_cals()
-		self.make_psf()
-		if self.verbose:
-			print('Made PSF')
-		self.calc_background()
-		if self.verbose:
-			print('Background subtracted')
-		#self.cal_spec()
-		self.all_spec()
-		if self.verbose:
-			print('Extracted spectra')
-		self.fit_spec_residual()
-		self.make_scene()
-		if self.verbose:
-			print('Made scene')
-		self.difference()
-		self.save_hdu()
-		if self.verbose:
-			print('Saved reduction')
+		try:
+			self._load_cube()
+			self._get_cat()
+			#self._estimate_trail_angle(trail)
+			#self._find_sources_DAO()
+			self._find_sources_cluster()
+			self._fit_DAO_to_cat()
+			self._transform_coords()		
+			if self.verbose:
+				print('Coords transformed')
+			#self._identify_cals()
+			self.complex_isolation_cals()
+			self.make_psf()
+			if self._rerun_cal:
+				if self.verbose:
+					print('Rerunning cal with psf sources')
+				self._psf_isolation()
+				self.make_psf()
+			self._psf_contained_check()
+			if self.verbose:
+				print('Made PSF')
+			self.calc_background()
+			if self.verbose:
+				print('Background subtracted')
+			#self.cal_spec()
+			self.all_spec()
+			if self.verbose:
+				print('Extracted spectra')
+			self.fit_spec_residual()
+			self.make_scene()
+			if self.verbose:
+				print('Made scene')
+			self.difference()
+			self.save_hdu()
+			if self.verbose:
+				print('Saved reduction')
+		except Exception:
+			print(traceback.format_exc())
 
 

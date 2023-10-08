@@ -374,10 +374,10 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
 def parallel_psf_fit(image,psf,psf_profile):
     psf.fit_psf(image)
     psf.line()
-    if psf_profile == 'moffat':
+    if 'moffat' in psf_profile:
         params = np.array([psf.alpha,psf.beta,psf.length,psf.angle])
         shifts = np.array([psf.source_x,psf.source_y])
-    elif psf_profile =='gaussian':
+    elif 'gaussian' in psf_profile:
         params = np.array([psf.stddev,psf.length,psf.angle])
         shifts = np.array([psf.source_x,psf.source_y])
     return params, shifts

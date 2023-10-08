@@ -240,12 +240,15 @@ class create_psf():
         self.psf_fit = res
 
     def make_data_psf(self,data_cuts):
+        psf_mask = (self.longpsf > 1e-10) * 2
+        data_cuts *= psf_mask[np.newaxis,:,:]
+        data_cuts[np.isnan(data_cuts)] = 0.0
         medcuts = data_cuts / np.nanmax(data_cuts,axis=(1,2))[:,np.newaxis,np.newaxis]
         sm = np.zeros_like(medcuts)
         for i in range(len(medcuts)):
             self.fit_pos(medcuts[i])
             sm[i] = shift(medcuts[i],[-self.source_y,-self.source_x],mode='nearest')
-        data_psf = np.nanmedian(sm,axis=0)      
+        data_psf = np.nanmedian(sm,axis=0)    
         self.data_psf = data_psf / np.nansum(data_psf)
         self.data_psf[self.data_psf < 1e-4] = 0
 
@@ -258,7 +261,7 @@ class create_psf():
                             (XX.ravel(),YY.ravel()),method='linear',fill_value=0)
 
         estimate = estimate.reshape(len(self.Y),len(self.X))
-        estimate[estimate < 1e-4] = 0
+        estimate[estimate < 1e-8] = 0
         print('estimate shape ',estimate.shape)
         self.data_PSF = estimate
 
