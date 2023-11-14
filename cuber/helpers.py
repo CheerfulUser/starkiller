@@ -26,20 +26,23 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 def get_gaia_region(ra,dec,size=0.4, magnitude_limit = 21):
     """
-    Get the coordinates and mag of all gaia sources in the field of view.
+    Get the coordinates and mag of all gaia sources in the field of view from the I/355/gaiadr3 catalogue on Vizier.
 
-    -------
-    Inputs-
-    -------
-        tpf 				class 	target pixel file lightkurve class
-        magnitude_limit 	float 	cutoff for Gaia sources
-        Offset 				int 	offset for the boundary 
-
+    Parameters
+    ----------
+        ra : float
+            RA of the search area
+        dec : float 
+            Dec of the search field
+        size : float
+            Area of the cone search in arcsec
+        magnitude_limit : float
+            cutoff for Gaia sources
+    
+    Returns
     --------
-    Outputs-
-    --------
-        coords 	array	coordinates of sources
-        Gmag 	array 	Gmags of sources
+    result : pandas dataframe
+        Dataframe containing the results of the Vizier query. 
     """
     c1 = SkyCoord(ra, dec, unit='deg')
     Vizier.ROW_LIMIT = -1
@@ -64,11 +67,31 @@ def get_gaia_region(ra,dec,size=0.4, magnitude_limit = 21):
     result = result['I/355/gaiadr3'].to_pandas()
     result = result.rename(columns={'RA_ICRS':'ra','DE_ICRS':'dec','Gmag':'G_mag','Source':'id'})
     result['G_filt'] = 'GAIA/GAIA3.G'
+    result['G_mag'] += 0.118 # Correct Gaia G from Vega to AB magnitude system
 
     return result
 
 
 def min_dist(x1,y1,x2,y2):
+    """
+    Calculate the minimum distances between an 2 groups of points.
+
+    Parameters
+    ----------
+    x1 : numpy ndarray
+        x positions from group 1
+    y1 : numpy ndarray
+        y positions from group 1
+    x2 : numpy ndarray
+        x positions from group 2
+    y2 : numpy ndarray
+        y positions from group 2
+
+    Returns
+    -------
+    md : numpy ndarray
+        Array containing the smallest distances between the two groups for each entry.
+    """
     dx = x1[:,np.newaxis] - x2[np.newaxis,:]
     dy = y1[:,np.newaxis] - y2[np.newaxis,:]
     d = np.sqrt(dx**2 + dy**2)
@@ -76,14 +99,56 @@ def min_dist(x1,y1,x2,y2):
     return md
 
 def minimize_dist(offset,x1,y1,x2,y2,image):
+    """
+    Minimizing function to find the minimum distance between 2 sets of xy coordinates.
+
+    Parameters 
+    ----------
+    offset : offset : numpy ndarray, list
+        Parameters used in the coordinate shift: [0] is the x shify; [1] is the y shift; [3] is the rotation
+    x1 : numpy ndarray
+        x positions from group 1
+    y1 : numpy ndarray
+        y positions from group 1
+    x2 : numpy ndarray
+        x positions from group 2
+    y2 : numpy ndarray
+        y positions from group 2
+    image : numpy ndarray
+        Target image, used to get the image dimensions correct.
+
+    Returns
+    -------
+    mean_mdist : float
+        Mean distance for between all sources in groups 1 and 2.
+
+
+    """
     x,y = transform_coords(x1,y1,offset,image)
 
     ind = (x > 0) & (x < image.shape[1]) & (y > 0) & (y < image.shape[0])
     x = x[ind]; y = y[ind]
     mdist = min_dist(x2,y2,x,y)
-    return np.nanmean(mdist)
+    mean_mdist = np.nanmean(mdist)
+    return mean_mdist
 
 def basic_image(offset,x,y,image,kernel):
+    """
+    Create a simplistic catalogue image from input positions and a convolution kernel. Sources are added to the array then convolved with the kernel.
+
+    Parameters
+    ----------
+    offset : numpy ndarray, list
+        Parameters used in the coordinate shift: [0] is the x shify; [1] is the y shift; [3] is the rotation
+    x : numpy ndarray 
+        x positions of the catalogue sources 
+    y : numpy ndarray 
+        y positions of the catalogue sources 
+    image : numpy ndarray
+        Target image, used to get the image dimensions correct.
+    kernel : numpy ndarray
+        Convolution kernel to create the simple image from the catalogue sources.
+    """
     x,y = transform_coords(x,y,offset,image)
     
     cut = (0<=x) & (x < image.shape[1]) & (0<=y) & (y < image.shape[0])
@@ -94,6 +159,27 @@ def basic_image(offset,x,y,image,kernel):
     return guess
 
 def minimize_cats(offset,x,y,image,kernel):
+    """
+    Simplistic minimising function for finding an alignment between an image and a catalogue by subtracting a convolved source image from the target image.
+
+    Parameters
+    ----------
+    offset : numpy ndarray, list
+        Parameters used in the coordinate shift: [0] is the x shify; [1] is the y shift; [3] is the rotation
+    x : numpy ndarray
+        x coordinates of the sources 
+    y : numpy ndarray
+        y coordinates of the sources 
+    image : numpy ndarray 
+        Boolean image to compare the catalogue positions to.
+    kernel : numpy ndarray 
+        Basic kernel which is used to create a basic image from the x y catalogue positions.
+
+    Returns
+    -------
+    res : float
+        Residual of the difference
+    """
     guess = basic_image(offset,x,y,image,kernel)
     res = np.nansum(image - guess)
     return res
@@ -101,6 +187,27 @@ def minimize_cats(offset,x,y,image,kernel):
 
 
 def transform_coords(x,y,param,image):
+    """
+    Transforms the input coordinates by x/y shifts and a rotation around the image center.
+
+    Parameters
+    ----------
+    x : numpy ndarray
+        x positions 
+    y : numpy ndarray
+        y positions 
+    param : numpy ndarray, list 
+        Parameters used in the coordinate shift: [0] is the x shify; [1] is the y shift; [3] is the rotation
+    image : numpy ndarray
+        Image that the coordinates are being applied to, this is only used to get the center of rotation.
+
+    Returns
+    -------
+    xx : numpy ndarray
+        new x positions 
+    yy : numpy ndarray
+        new y positions 
+    """
     xx = x + param[0]
     yy = y + param[1]
     cx = image.shape[1]/2; cy = image.shape[0]/2
@@ -111,6 +218,29 @@ def transform_coords(x,y,param,image):
     return xx, yy
 
 def get_star_cuts(x_length,y_length,image,cat,norm=False):
+    """
+    Create image cutouts of sources based on xy positions from the input catalogue.
+
+    Parameters
+    ----------
+    x_length : int
+        Length of the x dimension of the cutout
+    y_length : int
+        Length of the y dimension of the cutout 
+    image : numpy ndarray 
+        Image to make the cutout from 
+    cat : pandas DataFrame 
+        Catalogue of sources containing the xy pixel position
+    norm : Bool
+        Option to normalise the cutouts.
+
+    Returns
+    -------
+    star_cuts : numpy ndarray
+        Cutouts of the sources defined in the catalogue 
+    good : numpy ndarray
+        Array of boolean entries defining if sources are good or not. Bad sources are close to the edge.
+    """
     pad = np.nanmax([y_length,x_length])*2
     image = np.pad(image,pad) 
     image[image==0] = np.nan
@@ -134,6 +264,28 @@ def get_star_cuts(x_length,y_length,image,cat,norm=False):
     return star_cuts, good
     
 def replace_cut(x_length,y_length,image,cuts,cat):
+    """
+    Attempt to repace the source in the cutout (dont think this is used.)
+
+    Parameters
+    ----------
+    x_length : int
+        Length of the x dimension of the cutout
+    y_length : int
+        Length of the y dimension of the cutout 
+    image : numpy ndarray 
+        Image to make the cutout from 
+    cuts : numpy ndarray 
+        Array of cutouts in the image to be placed back in.
+    cat : pandas DataFrame
+        Catalogue of sources containing their coordinates.
+
+    Retrurns
+    --------
+    replace : numpy ndarray
+        Image where the cutouts have been replaced into it.
+
+    """
     pad = np.nanmax([y_length,x_length])*2
     image = np.pad(image,pad) 
     image[image==0] = np.nan
@@ -147,6 +299,9 @@ def replace_cut(x_length,y_length,image,cuts,cat):
     return replace
 
 def replace_cube(cube,cut,x_length,y_length,cat):
+    """
+
+    """
     replace = deepcopy(cube)
     for i in range(len(cube)):
         replace[i] = replace_cut(x_length,y_length,cut[i],cat)
