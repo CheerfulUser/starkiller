@@ -12,11 +12,11 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = 'cuber'
+NAME = 'starkiller'
 DESCRIPTION = 'Make fake MUSE cubes.'
-URL = 'https://github.com/CheerfulUser/cube_scene'
+URL = 'https://github.com/CheerfulUser/starkiller'
 EMAIL = 'ryan.ridden@canterbury.ac.nz'
-AUTHOR ='Ryan Ridden-Harper'
+AUTHOR ='Ryan Ridden'
 REQUIRES_PYTHON = '>=3.6.0'
 VERSION = '0.1.0'
 
