@@ -53,7 +53,7 @@ class starkiller():
 				 psf_profile='gaussian',wcs_correction=True,psf_preference='data',
 				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
-				 show_specs=False):
+				 show_specs=False,fuzzy=False):
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim
@@ -69,6 +69,7 @@ class starkiller():
 		self._flux_correction = flux_correction
 		self._wavelength_sol = wavelength_sol
 		self._show_specs = show_specs
+		self._fuzzy_field = fuzzy
 
 		if (key_filter is None) & (catalog is None):
 			self.key_filter = 'G'
@@ -220,14 +221,14 @@ class starkiller():
 			obj_size += [np.sum(labeled==i)]
 		obj_size = np.array(obj_size)
 		targs = np.where((obj_size > 100) & (obj_size<1e4))[0]
-		good = []
-		for i in range(len(targs)):
-			im = (labeled == targs[i]) * 1
-			fuzz_overlap = np.nansum(im * self.fuzzy_mask)
-			if fuzz_overlap == 0:
-				good += [i]
-		good = np.array(good)
-		targs = targs[good]
+		#good = []
+		#for i in range(len(targs)):
+		#	im = (labeled == targs[i]) * 1
+		#	fuzz_overlap = np.nansum(im * self.fuzzy_mask)
+		#	if fuzz_overlap == 0:
+		#		good += [i]
+		#good = np.array(good)
+		#targs = targs[good]
 		dy = np.zeros_like(targs)
 		dx = np.zeros_like(targs)
 		my = np.zeros_like(targs)
@@ -275,32 +276,36 @@ class starkiller():
 
 
 	def _find_fuzzy_mask(self,size_lim=0.4):
-		labeled, nr_objects = label(self.image> np.nanmedian(self.image)) 
-		obj_size = []
-		obj_counts = []
-		for i in range(nr_objects):
-			obj_size += [np.sum(labeled==i)]
-			lab = (labeled==i) * 1.
-			lab[lab==0] = np.nan
-			obj_counts += [np.nanmean(lab * self.image)]
-		obj_size = np.array(obj_size)
-		obj_counts = np.array(obj_counts)
+		if self._fuzzy_field:
+			labeled, nr_objects = label(self.image> np.nanmedian(self.image)) 
+			obj_size = []
+			obj_counts = []
+			for i in range(nr_objects):
+				obj_size += [np.sum(labeled==i)]
+				lab = (labeled==i) * 1.
+				lab[lab==0] = np.nan
+				obj_counts += [np.nanmean(lab * self.image)]
+			obj_size = np.array(obj_size)
+			obj_counts = np.array(obj_counts)
 
-		pixels = self.cube.shape[1] * self.cube.shape[2]
-		big = (obj_size / pixels) > size_lim
-		fuzzy_mask = np.zeros_like(self.image)
-		bkg_mask = np.zeros_like(self.image)
-		if sum(big*1) > 1:
-			fuzzy_ind = np.where(big & (obj_counts > np.nanmin(obj_counts[big])))[0]
-			bkg_ind = np.where(big & (obj_counts == np.nanmin(obj_counts[big])))[0]
-			fuzzy_mask = labeled == np.arange(0,nr_objects)[fuzzy_ind]
-			bkg_mask = labeled == np.arange(0,nr_objects)[bkg_ind]
-		if sum(big*1) >= 1:
-			bkg_ind = np.where(big & (obj_counts == np.nanmin(obj_counts[big])))[0]
-			bkg_mask = labeled == np.arange(0,nr_objects)[bkg_ind]
+			pixels = self.cube.shape[1] * self.cube.shape[2]
+			big = (obj_size / pixels) > size_lim
+			fuzzy_mask = np.zeros_like(self.image)
+			bkg_mask = np.zeros_like(self.image)
+			if sum(big*1) > 1:
+				fuzzy_ind = np.where(big & (obj_counts > np.nanmin(obj_counts[big])))[0]
+				bkg_ind = np.where(big & (obj_counts == np.nanmin(obj_counts[big])))[0]
+				fuzzy_mask = labeled == np.arange(0,nr_objects)[fuzzy_ind]
+				bkg_mask = labeled == np.arange(0,nr_objects)[bkg_ind]
+			if sum(big*1) >= 1:
+				bkg_ind = np.where(big & (obj_counts == np.nanmin(obj_counts[big])))[0]
+				bkg_mask = labeled == np.arange(0,nr_objects)[bkg_ind]
 
-		self.fuzzy_mask = fuzzy_mask
-		self.bkg_mask = bkg_mask
+			self.fuzzy_mask = fuzzy_mask
+			self.bkg_mask = bkg_mask
+		else:
+			self.fuzzy_mask = np.zeros_like(self.image)
+			self.bkg_mask = np.zeros_like(self.image)
 
 
 
@@ -792,7 +797,7 @@ class starkiller():
 	def cal_spec(self):
 		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
 
-		cal_model, cors, ebvs = spec_match(cal_specs,self.mags[self.good_cals],self.filts,model_type=self.spec_cat,num_cores=self.numcores)
+		cal_model, cors, ebvs, redshift = spec_match(cal_specs,self.mags[self.good_cals],self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 		
 		self.cal_specs = cal_specs	
 		self.cal_models = cal_model
@@ -810,7 +815,7 @@ class starkiller():
 			if len(conds) >= 2:
 				diffs = []
 				for i in ind[conds]:
-					diff = self.models[i].sample(self.specs[i].wave) / self.specs[i].flux
+					diff = (self.models[i].sample(self.specs[i].wave) * self.cat['containment'].values[i]) / self.specs[i].flux
 					diff[~np.isfinite(diff)] = 1
 					diffs += [diff]
 				diff = np.nanmedian(np.array(diffs),axis=0)
@@ -862,14 +867,15 @@ class starkiller():
 	def _rerun_model_fit(self):
 		specs = deepcopy(self.specs)
 		for i in range(len(self.specs)):
-			specs[i] = S.ArraySpectrum(wave=self.lam,flux=self.specs[i].flux * self.flux_corr,name = self.specs[i].name)
+			specs[i] = S.ArraySpectrum(wave=self.lam,flux=specs[i].flux * self.flux_corr,name = self.specs[i].name)
 
 
-		model, cors, ebvs = spec_match(specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
+		model, cors, ebvs, redshift = spec_match(specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 
 		self.models = model
 		self.cors = cors 
 		self.ebvs = ebvs
+		self.redshifts = redshift
 		if self.plot:
 			self.plot_specs(show=self._show_specs)
 
@@ -884,12 +890,13 @@ class starkiller():
 		self.specs = specs
 		self._sort_cat_filts_mags()
 
-		model, cors, ebvs = spec_match(specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
+		model, cors, ebvs, redshifts = spec_match(specs,self.mags,self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 
 		self.models = model
 		self.cors = cors 
 		self.ebvs = ebvs
 		self.spec_res = residual
+		self.redshifts = redshifts 
 		#if self.plot:
 		#	self.plot_specs()
 
@@ -1049,7 +1056,7 @@ class starkiller():
 			else:
 				self._fill_params()	
 			self._transform_coords()	
-			self._find_fuzzy_mask()
+			
 			if self.verbose:
 				print('Coords transformed')
 			#self._identify_cals()

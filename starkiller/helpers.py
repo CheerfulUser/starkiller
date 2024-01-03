@@ -1,5 +1,6 @@
 import pandas as pd 
 import numpy as np
+import matplotlib.pyplot as plt
 
 import pysynphot as S
 from extinction import fitzpatrick99, apply
@@ -20,6 +21,7 @@ from astropy.coordinates import SkyCoord, Angle
 from scipy import signal
 
 from astroquery.vizier import Vizier
+
 
 import os
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
@@ -377,8 +379,8 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores,data_psf=None)
     #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
     #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
     #for i in range(len(cuts)):
-    #    f, r, xo, yo = psf_spec(cuts[i],psf_params)
-    #    flux[i] = f; res[i] = r; xoff[i] = xo; yoff[i] = yo
+    #   f, r, xo, yo = psf_spec(cuts[i],psf_params)
+    #   flux[i] = f; res[i] = r; xoff[i] = xo; yoff[i] = yo
 
     residual = np.array(res)
     cat['x_offset'] = xoff
@@ -472,7 +474,10 @@ def match_spec_to_model(spec,catalog='ck+'):
         path = f'{package_directory}data/eso_spec/*'
         model, cor = _compare_catalog(path,lam,flux)
 
-    return model, cor
+    redshift, _ = calc_redshift(spec)
+    model = model.redshift(-redshift)
+
+    return model, cor, redshift
 
 
 
@@ -505,14 +510,14 @@ def _norm_spec(spec,mag,pbs):
     return norm
 
 def _par_spec_fit(spec,pbs,mag,model_type):
-    model,cor = match_spec_to_model(spec,model_type)
+    model,cor,redshift = match_spec_to_model(spec,model_type)
     model2 = _norm_spec(model,mag,pbs)
 
     ext, ebv = fit_extinction(model2,spec)
 
     ext = _norm_spec(ext,mag,pbs)
 
-    return ext, cor, ebv
+    return ext, cor, ebv, redshift
 
 
 
@@ -520,7 +525,7 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
 
     svo_bp=filters
     pbs = load_pbs(svo_bp,0,'AB',SVO=True)
-    cal_model, cors, ebvs = zip(*Parallel(n_jobs=num_cores)(delayed(_par_spec_fit)(specs[i],pbs,mags[i],model_type) for i in range(len(specs))))
+    cal_model, cors, ebvs, redshift = zip(*Parallel(n_jobs=num_cores)(delayed(_par_spec_fit)(specs[i],pbs,mags[i],model_type) for i in range(len(specs))))
     '''for i in range(len(specs)):
                     model,cor = match_spec_to_model(specs[i],model_type)
                     model2 = my_norm(model,pbs,np.array([cat.Gmag.values[i]]),name=model.name)
@@ -531,7 +536,7 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
                     ebvs += [ebv]'''
     ebvs = np.array(ebvs)
     cors = np.array(cors)
-    return cal_model, cors, ebvs
+    return cal_model, cors, ebvs, redshift
 
 def parallel_psf_fit(image,psf,psf_profile):
     psf.fit_psf(image)
@@ -545,18 +550,149 @@ def parallel_psf_fit(image,psf,psf_profile):
     return params, shifts
 
 
-def fit_redshift(spec):
-    lines = {'Hb':np.array([4861.323]),
-             'NaD':np.array([5889.951, 5895.924]),
-             'Ha':np.array([6562.797]),
-             'CaII':np.array([8498.020, 8542.088, 8662.138])}
-    g_init = (models.Const1D(an_disp) + models.Gaussian1D(amplitude=(an_amplitude - an_disp), mean=an_mean, stddev=an_stddev))
-    fit_g = fitting.LevMarLSQFitter()
-    g = fit_g(g_init, orig_wavelength, orig_flux)
-
 
 def lam_vac2air(lam):
 
     air = lam / (1.0 + 2.735182e-4 + 131.4182 / lam**2 + 2.76249E8 / lam**4)
 
     return air
+
+
+
+
+def calc_redshift(spec):
+    from astropy.modeling import models,fitting
+    from astropy import modeling
+    lines = {'Hb':np.array([4861.323]),
+         'NaD':np.array([5889.951, 5895.924]),
+         'Ha':np.array([6562.797]),
+         'CaII_I':np.array([8498.020]),
+         'CaII_II':np.array([8542.088]),
+         'CaII_III':np.array([8662.138])
+            }
+    fitted = {}
+    for line in lines.keys():
+        fits = []
+        wave = []
+        flux = []
+        em = lines[line]
+        cont = []
+        dip = []
+        for i in range(len(em)):
+            cont += [spec.sample(em[i]+20)]
+            dip += [spec.sample(em[i])/cont[i] - 1]
+
+        mod = []
+        if line == 'NaD':
+            g_init = (models.Const1D(1) + models.Gaussian1D(amplitude=(dip[0]), mean=em[0], stddev=1)
+                      + models.Gaussian1D(amplitude=(dip[1]), mean=em[1], stddev=1))
+            mod = g_init
+            ind = (spec.wave > em[0]-20) & (spec.wave < em[1]+20)
+            wave = spec.wave[ind]
+            flux = spec.flux[ind]/cont[0]
+        else:
+            for i in range(len(em)):
+                g_init = (models.Const1D(1) + models.Gaussian1D(amplitude=(dip[i]), mean=em[i], stddev=1))
+                mod = g_init
+                ind = (spec.wave > em[0]-20) & (spec.wave < em[0]+20)
+                wave = spec.wave[ind]
+                flux =  spec.flux[ind]/cont[i]
+
+
+        fit_mod = fitting.LevMarLSQFitter()
+
+        finite = np.isfinite(flux)
+        if np.nansum(finite) > 10:
+            g = fit_mod(mod, wave[finite], flux[finite])
+            if line == 'NaD':
+                diff = np.mean(np.array([g.mean_1/em[0]-1,g.mean_2/em[1]-1]))
+            else:
+                diff = g.mean_1 / em[0] - 1
+            m = g(wave)
+            cor = pearsonr(m[finite],flux[finite]).correlation
+            if (cor > 0.8)& (g.amplitude_1.value < 0):
+                good = True
+            else:
+                good = False
+        else:
+            g = None
+            cor = 0
+            diff = np.nan
+
+
+        fitted[line] = {'fit':g,'wave':wave,'flux':flux,'shift':diff,'cor':cor,'quality':good}
+
+    shift = []
+    for line in lines.keys():   
+        if fitted[line]['quality']:
+            shift += [fitted[line]['shift']]
+    shift = np.nanmedian(shift)
+    if np.isnan(shift):
+        shift = 0
+
+    return shift, fitted
+
+
+def plot_z_shifts(spec):
+
+    fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+    inches_per_pt = 1.0/72.27            # Convert pt to inches
+    golden_mean = (np.sqrt(5)-1.0)/2.0     # Aesthetic ratio
+    fig_width = fig_width_pt*inches_per_pt  # width in inches
+    _,fitted = calc_redshift(spec)
+    fig, axs = plt.subplot_mosaic('''
+                                   ABC
+                                   DEF
+                                   ''',
+                                  figsize=(1.5*fig_width*2,1*fig_width*1.5))
+
+
+    axs['A'].set_title(r'H$\beta$')
+    axs['A'].plot(fitted['Hb']['wave'],fitted['Hb']['flux'],label='Spectrum')
+    mod = fitted['Hb']['fit'](fitted['Hb']['wave'])
+    axs['A'].plot(fitted['Hb']['wave'],mod,'--',label='Model')
+    axs['A'].legend(loc=4)
+    axs['A'].set_ylabel('Normalised flux',fontsize=12)
+    axs['A'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['Hb']['shift'],b=fitted['Hb']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    axs['B'].set_title(r'H$\alpha$')
+    axs['B'].plot(fitted['Ha']['wave'],fitted['Ha']['flux'])
+    mod = fitted['Ha']['fit'](fitted['Ha']['wave'])
+    axs['B'].plot(fitted['Ha']['wave'],mod,'--')
+    axs['B'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['Ha']['shift'],b=fitted['Ha']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    axs['C'].set_title(r'Na D')
+    axs['C'].plot(fitted['NaD']['wave'],fitted['NaD']['flux'])
+    mod = fitted['NaD']['fit'](fitted['NaD']['wave'])
+    axs['C'].plot(fitted['NaD']['wave'],mod,'--')
+    axs['C'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['NaD']['shift'],b=fitted['NaD']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    axs['D'].set_title(r'Ca II triplet I')
+    axs['D'].plot(fitted['CaII_I']['wave'],fitted['CaII_I']['flux'])
+    mod = fitted['CaII_I']['fit'](fitted['CaII_I']['wave'])
+    axs['D'].plot(fitted['CaII_I']['wave'],mod,'--')
+    axs['D'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
+    axs['D'].set_ylabel('Normalised flux',fontsize=12)
+    axs['D'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_I']['shift'],b=fitted['CaII_I']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    axs['E'].set_title(r'Ca II triplet II')
+    axs['E'].plot(fitted['CaII_II']['wave'],fitted['CaII_II']['flux'])
+    mod = fitted['CaII_II']['fit'](fitted['CaII_II']['wave'])
+    axs['E'].plot(fitted['CaII_II']['wave'],mod,'--')
+    axs['E'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
+    axs['E'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_II']['shift'],b=fitted['CaII_II']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    axs['F'].set_title(r'Ca II triplet III')
+    axs['F'].plot(fitted['CaII_III']['wave'],fitted['CaII_III']['flux'])
+    mod = fitted['CaII_III']['fit'](fitted['CaII_III']['wave'])
+    axs['F'].plot(fitted['CaII_III']['wave'],mod,'--')
+    axs['F'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
+    axs['F'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_III']['shift'],b=fitted['CaII_III']['cor']),(.05,.1), 
+                      xycoords='axes fraction')
+
+    plt.tight_layout()
