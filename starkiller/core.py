@@ -54,65 +54,65 @@ class starkiller():
 				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
 				 show_specs=False,fuzzy=False):
-	"""
-	Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
+		"""
+		Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
 
-	Parameters:
-	-----------
-	file : str
-		File to run the reduction on.
-	trail : boolean
-		Whether or not to estimate the trail angle, if False then angle is set to 0.
-	model_maglim : float
-		Maximum magnitude for sources to be included in the model.
-	cal_maglim : float
-		Maximum magnitude for sources to be included in the calibration.
-	savepath : str
-		Path to save the reduction to. If None, the current working directory is used.
-	catalog : pandas DataFrame
-		Catalogue of sources to use. If None, then Gaia DR3 is used.
-	spec_catalog : str
-		Spectral catalogue to use, options are 'ck' or 'pickles', default is 'ck'.
-	key_filter : str
-		Filter to use for the catalogue, if None then the first filter in the catalogue is used.
-	ref_filter : str
-		Filter to use as the reference filter, if None then the first filter in the catalogue is used.
-	psf_profile : str
-		Profile to use for the PSF, options are 'gaussian' or 'moffat', default is 'gaussian'.
-	wcs_correction : boolean
-		Whether or not to correct the WCS coordinates, default is True.
-	psf_preference : str
-		Whether to use the PSF from the data or the PSF from the model, options are 'data' or 'model', default is 'data'.
-	plot : boolean
-		Whether or not to plot the reduction, default is True.
-	run : boolean
-		Whether or not to run the reduction, default is True.
-	verbose : boolean
-		Whether or not to print to the terminal, default is True.
-	numcores : int
-		Number of cores to use when running the reduction, default is 5.
-	rerun_cal : boolean
-		Whether or not to rerun the calibration, default is False.
-	calc_psf_only : boolean
-		Whether or not to only calculate the PSF, default is False.
-	flux_correction : boolean
-		Whether or not to correct the flux of the sources, default is True.
-	wavelength_sol : str
-		Whether to use the wavelength solution in air or vacuum, options are 'air' or 'vacuum', default is 'air'.
-	show_specs : boolean
-		Whether or not to show the spectra of the sources, default is False.
+		Parameters:
+		-----------
+		file : str
+			File to run the reduction on.
+		trail : boolean
+			Whether or not to estimate the trail angle, if False then angle is set to 0.
+		model_maglim : float
+			Maximum magnitude for sources to be included in the model.
+		cal_maglim : float
+			Maximum magnitude for sources to be included in the calibration.
+		savepath : str
+			Path to save the reduction to. If None, the current working directory is used.
+		catalog : pandas DataFrame
+			Catalogue of sources to use. If None, then Gaia DR3 is used.
+		spec_catalog : str
+			Spectral catalogue to use, options are 'ck' or 'pickles', default is 'ck'.
+		key_filter : str
+			Filter to use for the catalogue, if None then the first filter in the catalogue is used.
+		ref_filter : str
+			Filter to use as the reference filter, if None then the first filter in the catalogue is used.
+		psf_profile : str
+			Profile to use for the PSF, options are 'gaussian' or 'moffat', default is 'gaussian'.
+		wcs_correction : boolean
+			Whether or not to correct the WCS coordinates, default is True.
+		psf_preference : str
+			Whether to use the PSF from the data or the PSF from the model, options are 'data' or 'model', default is 'data'.
+		plot : boolean
+			Whether or not to plot the reduction, default is True.
+		run : boolean
+			Whether or not to run the reduction, default is True.
+		verbose : boolean
+			Whether or not to print to the terminal, default is True.
+		numcores : int
+			Number of cores to use when running the reduction, default is 5.
+		rerun_cal : boolean
+			Whether or not to rerun the calibration, default is False.
+		calc_psf_only : boolean
+			Whether or not to only calculate the PSF, default is False.
+		flux_correction : boolean
+			Whether or not to correct the flux of the sources, default is True.
+		wavelength_sol : str
+			Whether to use the wavelength solution in air or vacuum, options are 'air' or 'vacuum', default is 'air'.
+		show_specs : boolean
+			Whether or not to show the spectra of the sources, default is False.
 
-	Examples:
-	---------
-	For non-siderially tracked data
-	>>> from starkiller import starkiller
-	>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',
+		Examples:
+		---------
+		For non-siderially tracked data
+		>>> from starkiller import starkiller
+		>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',
 
-	For siderially tracked data
-	>>> from starkiller import starkiller
-	>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',trail=False)
+		For siderially tracked data
+		>>> from starkiller import starkiller
+		>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',trail=False)
 
-	"""
+		"""
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim

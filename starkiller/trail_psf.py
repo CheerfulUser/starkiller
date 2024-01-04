@@ -88,7 +88,7 @@ class create_psf():
             self.x=np.arange(x)+0.5
             self.y=np.arange(y)+0.5
         elif len(x)==1:
-            self.x=np.arange(x)+0.5 #type: ignore
+            self.x=np.arange(x)+0.5
             self.y=np.arange(y)+0.5
         else:
             self.x=x*1.0+0.5

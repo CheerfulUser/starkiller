@@ -5,15 +5,14 @@ from .trail_psf import create_psf
 from scipy import signal
 
 class PSF_photom():
-
-	def __init__(data,cat,psf_params):
+	def __init__(self,data,cat,psf_params):
 		self._set_data(data)
 		#self._set_source_dims(source_dims)
 		self._set_psf(psf_params)
 		self.cat = cat
 
 
-	def _set_psf(psf_params):
+	def _set_psf(self,psf_params):
 		self.psf_params = psf_params
 		if self.cube:
 			x=self.data.shape[2];y=self.data.shape[1]
@@ -31,7 +30,7 @@ class PSF_photom():
 		else:
 			self.cube = True
 
-	def _set_source_dims(source_dims):
+	def _set_source_dims(self,source_dims):
 		try:
 			length = len(source_dims)
 			if length == 2:
