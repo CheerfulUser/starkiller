@@ -25,13 +25,8 @@ Example of a star spectral fit:
 
 
 # Current limitations
-* Matching IFUs with bad spatial WCS solutions to Gaia can sometimes fall over.
-* Flux calibration artifacts still exist across MUSE data cubes, cause unknown.
 * Need to add simultaneous PSF fitting for close sources.
 * If stars are very long streaks that are not contained on the detector the WCS matching and PSF fitting may struggle.
-* Need to add in a method for inputting custom source catalogues.
-* Spectral fits aren't perfect, but currently do a good enough job.
-* Need a better package name! 
 
 
 
