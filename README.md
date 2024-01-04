@@ -20,7 +20,7 @@ ifu = cuber(file='filename',cal_maglim=20,run=True)
 
 Example of a star spectral fit:
 
-![plot](.Spec_match_example_residual.png)
+![plot](./figs/Spec_match_example_residual.png)
 
 
 
