@@ -54,6 +54,65 @@ class starkiller():
 				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
 				 show_specs=False,fuzzy=False):
+	"""
+	Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
+
+	Parameters:
+	-----------
+	file : str
+		File to run the reduction on.
+	trail : boolean
+		Whether or not to estimate the trail angle, if False then angle is set to 0.
+	model_maglim : float
+		Maximum magnitude for sources to be included in the model.
+	cal_maglim : float
+		Maximum magnitude for sources to be included in the calibration.
+	savepath : str
+		Path to save the reduction to. If None, the current working directory is used.
+	catalog : pandas DataFrame
+		Catalogue of sources to use. If None, then Gaia DR3 is used.
+	spec_catalog : str
+		Spectral catalogue to use, options are 'ck' or 'pickles', default is 'ck'.
+	key_filter : str
+		Filter to use for the catalogue, if None then the first filter in the catalogue is used.
+	ref_filter : str
+		Filter to use as the reference filter, if None then the first filter in the catalogue is used.
+	psf_profile : str
+		Profile to use for the PSF, options are 'gaussian' or 'moffat', default is 'gaussian'.
+	wcs_correction : boolean
+		Whether or not to correct the WCS coordinates, default is True.
+	psf_preference : str
+		Whether to use the PSF from the data or the PSF from the model, options are 'data' or 'model', default is 'data'.
+	plot : boolean
+		Whether or not to plot the reduction, default is True.
+	run : boolean
+		Whether or not to run the reduction, default is True.
+	verbose : boolean
+		Whether or not to print to the terminal, default is True.
+	numcores : int
+		Number of cores to use when running the reduction, default is 5.
+	rerun_cal : boolean
+		Whether or not to rerun the calibration, default is False.
+	calc_psf_only : boolean
+		Whether or not to only calculate the PSF, default is False.
+	flux_correction : boolean
+		Whether or not to correct the flux of the sources, default is True.
+	wavelength_sol : str
+		Whether to use the wavelength solution in air or vacuum, options are 'air' or 'vacuum', default is 'air'.
+	show_specs : boolean
+		Whether or not to show the spectra of the sources, default is False.
+
+	Examples:
+	---------
+	For non-siderially tracked data
+	>>> from starkiller import starkiller
+	>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',
+
+	For siderially tracked data
+	>>> from starkiller import starkiller
+	>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',trail=False)
+
+	"""
 		self.file = file
 		self.plot=plot
 		self.cal_maglim = cal_maglim
@@ -97,7 +156,12 @@ class starkiller():
 
 	def _check_dirs(self,dirlist):
 		"""
-		Check that all reduction directories are constructed
+		Check that all reduction directories are constructed.
+
+		Parameters:
+		-----------
+		dirlist : list
+			List of directories to check for, if they don't exist, they will be created.
 		"""
 		for d in dirlist:
 			if not os.path.isdir(d):
@@ -106,6 +170,10 @@ class starkiller():
 
 
 	def _load_cube(self):
+		"""
+		Load the cube from a fits file, and create the image.
+
+		"""
 		self.hdu = fits.open(self.file)
 		self.wcs = WCS(self.hdu[1])
 		self.cube = self.hdu[1].data
@@ -122,6 +190,11 @@ class starkiller():
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
 
 	def _get_cat(self):
+		"""
+		Load a catalogue, if none is specified then Gaia DR3 is used.
+
+
+		"""
 		if self.cat is None:
 			self.cat = get_gaia_region([self.ra],[self.dec],size=50)
 			self.cat = self.cat.sort_values('G_mag')
@@ -144,8 +217,17 @@ class starkiller():
 		self._sort_cat_filts_mags()
 		
 	def _sort_cat_filts_mags(self,cat=None):
-		#if cat is None:
-		cat = self.cat 
+		"""
+		Sort the catalogue into filters and magnitudes.
+
+		Parameters:
+		-----------
+		cat : pandas DataFrame
+			Catalogue to sort, if None then self.cat is used.
+		"""
+		if cat is None:
+			cat = self.cat 
+
 		keys = list(cat.keys())
 		filts = []
 		mags = []
@@ -167,6 +249,19 @@ class starkiller():
 		#	return filts, mags
 
 	def _estimate_trail_angle(self,trail):
+		"""
+		Estimate the angle of the trail in the image.
+
+		Parameters:
+		-----------
+		trail : boolean
+			Whether or not to estimate the trail angle, if False then angle is set to 0.
+		"""
+		if trail:
+			self._estimate_trail_angle_fft()
+		else:
+			self.angle = 0
+
 		fft = np.fft.fft2(self.bright_mask)
 		fft = np.fft.fftshift(fft)
 		magnitude_spectrum = np.abs(fft)
@@ -199,6 +294,9 @@ class starkiller():
 
 
 	def _find_sources_DAO(self):
+		"""
+		Find sources in the image using DAOStarFinder. 
+		"""
 		blur = gaussian_filter(self.image,5)
 
 		mean, med, std = sigma_clipped_stats(blur, sigma=3.0)
@@ -213,7 +311,23 @@ class starkiller():
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,84),origin='lower')
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
 
+	
 	def _find_sources_cluster(self):
+		"""
+		Find sources in the image using the cluster algorithm. 
+		"""
+		blur = gaussian_filter(self.image,5)
+		mean, med, std = sigma_clipped_stats(blur, sigma=3.0)
+		daofind = DAOStarFinder(fwhm=10,theta = self.angle,ratio=.5, threshold=3*std,exclude_border=True)
+		self._dao_s = daofind(blur - med)
+		if len(self._dao_s) < 2:
+			raise ValueError('Could not find sources in image, try setting trail=False')
+
+		if self.plot:
+			plt.figure()
+			plt.title('Sources found in image')
+			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,84),origin='lower')
+			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
 
 		labeled, nr_objects = label(self.bright_mask > 0) 
 		obj_size = []
@@ -276,6 +390,14 @@ class starkiller():
 
 
 	def _find_fuzzy_mask(self,size_lim=0.4):
+		"""
+		Find the fuzzy mask and the background mask.
+
+		Parameters:
+		-----------
+		size_lim : float
+			Minimum size of the fuzzy mask in units of the image size, default is 0.4.
+		"""
 		if self._fuzzy_field:
 			labeled, nr_objects = label(self.image> np.nanmedian(self.image)) 
 			obj_size = []
@@ -310,6 +432,11 @@ class starkiller():
 
 
 	def _fill_params(self):
+		"""
+		Fill the parameters for the cube simulator.
+		"""
+		self._fill_params_psf()
+		self._fill_params_cube()
 		self.y_length = 10 
 		self.x_length =10 
 		self.angle = 0
@@ -318,6 +445,23 @@ class starkiller():
 
 
 	def _cat_fitter(self,ind):
+		"""
+		Fit the catalogue to the sources in the image.
+
+		Parameters:
+		-----------
+		ind : int
+			Number of sources to fit.
+		"""
+		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[:ind],self.cat.dec.values[:ind],0,0)
+		
+		x0 = [0,0,0]
+		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
+		bounds = [[-20,20],[-20,20],[0,np.pi/2]]
+		res = minimize(minimize_dist,x0,args=(x,y,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
+		if self.verbose:
+			print('WCS shift: ',res.x)
+		self.wcs_shift = res.x
 		x0 = [0,0,0]
 		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[:ind],self.cat.dec.values[:ind],0,0)
 
@@ -332,21 +476,24 @@ class starkiller():
 		xx = cx + ((xx-cx)*np.cos(res.x[2])-(yy-cy)*np.sin(res.x[2]))
 		yy = cy + ((xx-cx)*np.sin(res.x[2])+(yy-cy)*np.cos(res.x[2]))
 
-		#ind = (xx > 0) & (xx < image.shape[1]) & (yy > 0) & (yy < image.shape[0])
-		#xx = xx[ind]; yy = yy[ind]
-
 		cut = min_dist(xx,yy,sourcex,sourcey) < 10
-			#plt.figure()
-			#plt.plot(sourcex,sourcey,'*',label='image')
-			#plt.plot(x,y,'s',label='orig cat')
-			#plt.plot(xx,yy,'+',label='shift cat')
-			#plt.legend()
 		res = minimize(minimize_dist,x0,args=(catx[cut],caty[cut],sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
 		if self.verbose:
 			print('WCS shift: ',res.x)
 		self.wcs_shift = res.x
 
 	def _match_by_shift(self):
+		"""
+		Match the catalogue to the sources in the image by shifting the catalogue.
+		"""
+		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
+		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
+		x0 = [0,0,0]
+		bounds = [[-10,10],[-10,10],[0,np.pi/2]]
+		res = minimize(minimize_dist,x0,args=(x,y,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
+		if self.verbose:
+			print('WCS shift: ',res.x)
+		self.wcs_shift = res.x
 		labeled, nr_objects = label(self.bright_mask > 0) 
 		obj_size = []
 		for i in range(nr_objects):
@@ -396,6 +543,22 @@ class starkiller():
 
 
 	def _fit_DAO_to_cat(self,maxiter=5,method='shift'):
+		"""
+		Match the catalogue to the sources in the image.
+
+		Parameters:
+		-----------
+		maxiter : int
+			Maximum number of iterations.
+		method : str
+			Method to use when matching the catalogue to the sources. Can be 'shift' or 'dist'.
+		"""
+		if method.lower() == 'dist':
+			safety = 0
+			failed = True
+			sourcenum = [1,2,3,4,5]
+			while (safety < maxiter) & failed:
+				ind = len(self._dao_s['xcentroid'])*sourcenum[safety]
 		if method.lower() == 'dist':
 			safety = 0
 			failed = True
@@ -421,6 +584,26 @@ class starkiller():
 		
 
 	def _transform_coords(self,plot=False):
+		"""
+		Transform the coordinates of the catalogue to match the image.
+
+		Parameters:
+		-----------
+		plot : boolean
+			Whether or not to plot the transformed coordinates.
+		"""
+		xx,yy = transform_coords(self.cat.x.values,self.cat.y.values,self.wcs_shift,self.image)
+		self.cat['x'] = xx
+		self.cat['y'] = yy
+		self.cat['xint'] = (self.cat['x'].values + 0.5).astype(int)
+		self.cat['yint'] = (self.cat['y'].values + 0.5).astype(int)
+		
+		if plot:
+			plt.figure()
+			plt.title('Matching cube sources with catalogue')
+			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
+			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'o',ms=7,label='DAO')
+			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 		if plot is None:
 			plot = self.plot
 
@@ -431,9 +614,6 @@ class starkiller():
 		d = np.sqrt((xx[:,np.newaxis] - xs[np.newaxis,:])**2 + (yy[:,np.newaxis] - ys[np.newaxis,:])**2)
 		md = np.nanmin(d,axis=1)
 		ind = md < (self.trail / 2)
-		#ind = (xx >= 0 - self.x_length/2) & (xx < self.image.shape[1]) & (yy >= 0) & (yy < self.image.shape[0])
-
-		#ind2 = np.isfinite(self.image[yy.astype(int),xx.astype(int)])
 
 		self.cat['x'] = xx
 		self.cat['y'] = yy
@@ -449,6 +629,19 @@ class starkiller():
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 
 	def _mag_isolation(self,dmag=3):
+		"""
+		Isolate sources in the image accounting for magnitude.
+
+		Parameters:
+		-----------
+		dmag : float
+			Difference in magnitude between sources to consider.
+
+		Returns:
+		--------
+		d : numpy array
+			Distance between sources.
+		"""
 		mags = self.cat[self.ref_filter].values
 		dmags = mags[:,np.newaxis] - mags[np.newaxis,:]
 		ind = dmags > dmag
@@ -461,10 +654,25 @@ class starkiller():
 
 
 	def _identify_cals(self):
-		#ind = ((self.cat['x'].values + self.x_length/1.8 < self.image.shape[1]) & 
-		#		(self.cat['y'].values + self.y_length/1.8 < self.image.shape[0]) & 
-		#		(self.cat['x'].values - self.x_length/1.8 > 0) & 
-		#		(self.cat['y'].values - self.y_length/1.8 > 0))
+		"""
+		Identify the calibration sources in the image. Creates a cals variable to track calibration sources.
+
+		"""
+		ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
+				(self.cat['y'].values.astype(int) < self.image.shape[0]) & 
+				(self.cat['x'].values.astype(int) > 0) & 
+				(self.cat['y'].values.astype(int) > 0))
+
+		d = self._mag_isolation()
+		ind2 = d > 10
+		ind3 = np.isfinite(self.image[self.cat['y'].values[ind].astype(int),self.cat['x'].values[ind].astype(int)])
+		ind4 = self.cat[self.ref_filter].values <= self.cal_maglim
+
+		ind[ind] = ind3
+		self.cat['cal_source'] = 0
+		ind = ind & ind2 & ind4
+		self.cat['cal_source'].iloc[ind] = 1
+		self.cals = self.cat.iloc[ind]
 		ind = ((self.cat['x'].values.astype(int) < self.image.shape[1]) & 
 				(self.cat['y'].values.astype(int) < self.image.shape[0]) & 
 				(self.cat['x'].values.astype(int) > 0) & 
@@ -482,6 +690,17 @@ class starkiller():
 		self.cals = self.cat.iloc[ind]
 	
 	def complex_isolation_cals(self,xdist=8,dmag=2):
+		"""
+		Isolate the calibration sources in the image. Creates a cals variable to track calibration sources.
+
+		Parameters:
+		-----------
+		xdist : float
+			Maximum distance in pixels between sources.
+		dmag : float
+			Difference in magnitude between sources to consider.
+
+		"""
 		xx = self.cat.xint.values; yy = self.cat.yint.values
 		ang = np.radians(self.angle)
 		cx = self.image.shape[1]/2; cy = self.image.shape[0]/2
@@ -531,6 +750,9 @@ class starkiller():
 
 
 	def _calc_angle(self):
+		"""
+		Calculate the angle of the trail in the image. Adds in the angle and _trail_grad variables.
+		"""
 		angles_r = []
 		grads = []
 		if len(self.cals) < 10:
@@ -557,6 +779,9 @@ class starkiller():
 		self.angle = angle
 
 	def _calc_length(self):
+		"""
+		Calculate the length of the trail in the image. Adds in the trail, x_length, and y_length variables.
+		"""
 		trails = []
 
 		x = np.arange(0, self.image.shape[1])
@@ -584,6 +809,12 @@ class starkiller():
 		self.x_length = abs(int(self.trail/2 * np.cos(self.angle)))
 				
 	def _isolate_cals(self):
+		"""
+		Isolate the calibration sources in the image. Creates a cal_cuts variable containing the cutouts and good_cals.
+
+		"""
+		self.cal_cuts = self.cube[:,self.cals.yint.values-self.y_length:self.cals.yint.values+self.y_length+1,
+								 self.cals.xint.values-self.x_length:self.cals.xint.values+self.x_length+1]
 		cals = self.cat.iloc[self.cat['cal_source'].values == 1]
 		star_cuts, good = get_star_cuts(self.x_length,self.y_length,self.image,cals)
 		self.cal_cuts = star_cuts 
@@ -595,6 +826,16 @@ class starkiller():
 		self.good_cals = good & ind
 
 	def make_psf(self,fine_shift=True,data_containment_lim=0.95):
+		"""
+		Make the psf for the image. Adds in the psf and psf_param variables.
+
+		Parameters:
+		-----------
+		fine_shift : boolean
+			Whether or not to do a fine shift using the psf offsets.
+		data_containment_lim : float
+			Containment limit of the data psf measured as percentage of total PSF flux.
+		"""
 		self._isolate_cals()
 		good = self.good_cals
 		ct = self.cal_cuts#[good]
@@ -656,6 +897,10 @@ class starkiller():
 		
 
 	def _check_psf_quality(self):
+		"""
+		Compare the data psf to the model psf. Prints a warning and updates the psf_profile if the difference is large.
+		If the psf_preference is set to 'model' then the model psf is used regardless of the difference.
+		"""
 		diff = np.sum(abs(self.psf.data_psf-self.psf.longpsf))
 		if (diff > 0.1) & (self.psf_preference=='data'):
 			m = (f"!!! Large difference of {np.round(diff,2)} between model_psf and data_psf!!!\nUsing the data_psf, override by setting psf_preference='model'")
@@ -663,6 +908,16 @@ class starkiller():
 			self.psf_profile += ' data'
 
 	def _fine_psf_shift(self,shifts,plot=None):
+		"""
+		Perform a fine shift to the catalogue positions based on the psf shifts.
+
+		Parameters:
+		-----------
+		shifts : numpy array
+			Shifts to apply to the psf.
+		plot : boolean
+			Whether or not to plot the new alignment.
+		"""
 		if plot is None:
 			plot = self.plot
 		if self.verbose:
@@ -689,6 +944,18 @@ class starkiller():
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 
 	def _psf_isolation(self,dmag = 2,containment=0.9,overlap_lim=0.2):
+		"""
+		Identifies the isolated sources based on the PSF. Creates a cal_cuts variable containing the cutouts and good_cals.
+
+		Parameters:
+		-----------
+		dmag : float
+			Difference in magnitude between sources to consider.
+		containment : float
+			Containment limit of the psf measured as percentage of total PSF flux.
+		overlap_lim : float
+			Overlap limit of the psf measured as percentage of total PSF flux.
+		"""
 		psf_mask = (self.psf.longpsf > 1e-10) * 1.
 		y = deepcopy(self.cat.yint.values); x = deepcopy(self.cat.xint.values)
 		ind = (y > 0) & (y < self.image.shape[0]) & (x > 0) & (x < self.image.shape[1])
@@ -755,6 +1022,9 @@ class starkiller():
 		
 
 	def _psf_contained_check(self):
+		"""
+		Finds what sources are in the data cube bsed on the PSF
+		"""
 		pad = int(self.trail/2)
 		psf_mask = (self.psf.longpsf > 1e-10) * 1.
 		y = deepcopy(self.cat.yint.values)+pad; x = deepcopy(self.cat.xint.values)+pad
@@ -776,6 +1046,9 @@ class starkiller():
 
 
 	def calc_background(self):
+		"""
+		Calculates the background of the image and subtracts it. Adds in the bkg and bkgstd variables.
+		"""
 		if 'data' in self.psf_profile:
 			data = True
 		else:
@@ -795,6 +1068,10 @@ class starkiller():
 
 
 	def cal_spec(self):
+		"""
+		Extracts the calibration spectra. Adds in the cal specs variables.
+		"""
+		self.specs = get_spec(self.cube,self.cals.xint.values,self.cals.yint.values,self.x_length,self.y_length,self.psf_param,self.lam)
 		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
 
 		cal_model, cors, ebvs, redshift = spec_match(cal_specs,self.mags[self.good_cals],self.filts,model_type=self.spec_cat,num_cores=self.numcores)
@@ -805,6 +1082,16 @@ class starkiller():
 		self.cal_ebv = np.array(ebvs)
 	
 	def fit_spec_residual(self,order=3,corr_limit=0.90):
+		"""
+		Fit the residuals of the spectra to a polynomial. Adds in the flux_corr variable.
+
+		Parameters:
+		-----------
+		order : int
+			Order of the polynomial to fit.
+		corr_limit : float
+			Correlation limit to use in identifying useful sources.
+		"""
 		if self._flux_correction:
 			cors = deepcopy(self.cors)
 			cors[self.cat['cal_source'].values == 0] = 0
@@ -865,6 +1152,9 @@ class starkiller():
 			
 
 	def _rerun_model_fit(self):
+		"""
+		Rerun the model fitting with the flux correction applied.
+		"""
 		specs = deepcopy(self.specs)
 		for i in range(len(self.specs)):
 			specs[i] = S.ArraySpectrum(wave=self.lam,flux=specs[i].flux * self.flux_corr,name = self.specs[i].name)
@@ -880,6 +1170,9 @@ class starkiller():
 			self.plot_specs(show=self._show_specs)
 
 	def all_spec(self):
+		"""
+		Extracts the spectra of all sources in the cube. Adds in the specs variable.
+		"""
 		data_psf = None
 		if 'data' in self.psf_profile:
 			data_psf = self.psf.data_psf
@@ -901,6 +1194,9 @@ class starkiller():
 		#	self.plot_specs()
 
 	def plot_specs(self,show=False):
+		"""
+		Plot the spectra of the sources in the cube.
+		"""
 		if ~show:
 			plt.ion()
 		specs = self.specs
@@ -922,6 +1218,9 @@ class starkiller():
 			plt.ion()
 
 	def make_scene(self):
+		"""
+		Makes the scene of the sources in the cube. Adds in the scene variable.
+		"""
 		if 'data' in self.psf_profile:
 			data = True
 		else:
@@ -937,6 +1236,9 @@ class starkiller():
 		self.scene = scene
 
 	def calc_difference(self):
+		"""
+		Calculate the difference between the scene and the cube. Adds in the diff variable.
+		"""
 		#self.diff = (self.cube * self.flux_corr[:,np.newaxis,np.newaxis]) - self.scene.sim
 		self.diff = self.cube - self.scene.sim
 		if self.plot:
@@ -944,6 +1246,9 @@ class starkiller():
 
 
 	def plot_diff(self):
+		"""
+		Plot the difference between the scene and the cube.
+		"""
 		ind = 1800
 		image = self.cube[ind]#np.nanmedian(self.cube,axis=0)
 		scene = self.scene.sim[ind]#np.nanmedian(self.scene.sim,axis=0)
@@ -977,6 +1282,9 @@ class starkiller():
 		#plt.close()
 
 	def _update_header(self):
+		"""
+		Updates the header information with relevant keys.
+		"""
 		self.header0['DIFF'] = ('True', 'scene difference')
 		self.header0['FlUX_COR'] = ('True', 'flux corrected')
 		self.header0['PSF_PROF'] = (self.psf_profile,'PSF profile used')
@@ -991,6 +1299,9 @@ class starkiller():
 
 
 	def _make_psf_bin(self):
+		"""
+		Creates the binary table containing the psf parameters.
+		"""
 		if 'moffat' in self.psf_profile:
 			rec = np.rec.array([np.array([self.psf_param[0]]),np.array([self.psf_param[1]]),
 								np.array([self.psf_param[2]]),np.array([self.psf_param[3]])],
@@ -1009,6 +1320,9 @@ class starkiller():
 
 
 	def plot_cal_sources(self):
+		"""
+		Plot the cal sources on the data.
+		"""
 		plt.figure()
 		plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
 		plt.plot(self.cat['x'],self.cat['y'],'C3.',label='Sources')
@@ -1017,6 +1331,9 @@ class starkiller():
 		plt.legend()
 
 	def plot_psf(self):
+		"""
+		Plot the psf used for the reduction.
+		"""
 		plt.figure()
 		plt.subplot(131)
 		plt.imshow(self.psf.longpsf)
@@ -1032,6 +1349,9 @@ class starkiller():
 		plt.title(self.psf_profile + ' $-$ Data PSF')
 
 	def save_hdu(self):
+		"""
+		Save the reduction to a fits file.
+		"""
 		name = self.savepath +  self.file.split('/')[-1].split('.fits')[0] + '_diff.fits'
 		self._update_header()
 		self._make_psf_bin()
@@ -1044,6 +1364,14 @@ class starkiller():
 		hdul.writeto(name,overwrite=True)
 
 	def run_cube(self,trail=True):
+		"""
+		Run the cube reduction. This is the main function that calls all the other functions.
+
+		Parameters:
+		-----------
+		trail : boolean
+			Whether or not to estimate the trail angle. Turn off if this is a siderially tracked cube
+		"""
 		try:
 			self._load_cube()
 			self._get_cat()

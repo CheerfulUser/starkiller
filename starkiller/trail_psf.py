@@ -9,6 +9,21 @@ from scipy.ndimage import shift
 from scipy.interpolate import griddata
 
 def downSample2d(arr,sf):
+    """
+    Downsample an array by a factor of sf.
+
+    Parameters
+    ----------
+    arr : 2d numpy array
+        Input array to be downsampled.
+    sf : int
+        Downsample factor.
+
+    Returns
+    -------
+    arr_ds : 2d numpy array
+        Downsampled array.
+    """
     isf2 = 1.0/(sf*sf)
     (A,B) = arr.shape
     windows = view_as_windows(arr, (sf,sf), step = sf)
@@ -17,6 +32,44 @@ def downSample2d(arr,sf):
 class create_psf():
     def __init__(self,x,y,angle,length,alpha=3.8,beta=4.765,stddev=2,
                  repFact=10,verbose=False,psf_profile='gaussian'):
+        """
+        Create a PSF object that can be used for both non-siderial and sidrial tracking.
+        This class is built from the TRIPPY package.
+
+        Parameters
+        ----------
+        x : int or 1d numpy array
+            x dimension of the PSF
+        y : int or 1d numpy array
+            y dimension of the PSF
+        angle : float
+            Angle of motion of the object in degrees.
+        length : float
+            Length of the exposure in the same units as the rate.
+        alpha : float
+            Alpha parameter of the moffat profile.
+        beta : float
+            Beta parameter of the moffat profile.
+        stddev : float
+            Standard deviation of the gaussian profile.
+        repFact : int
+            Replication factor for the PSF. PSF will be downsampled by this factor.
+        verbose : bool
+            Verbose output.
+        psf_profile : str
+            Profile of the PSF. Options are 'gaussian' or 'moffat'.
+
+        Returns
+        -------
+        psf : object
+            PSF object.
+
+        Examples
+        --------
+        >>> psf = create_psf(100,100,angle=10,length=10,repFact=10)
+        >>> psf.fit_psf(image)
+        >>> psf.psf_fig()
+        """
         self.A=None
         self.alpha=alpha
         self.beta=beta
@@ -35,7 +88,7 @@ class create_psf():
             self.x=np.arange(x)+0.5
             self.y=np.arange(y)+0.5
         elif len(x)==1:
-            self.x=np.arange(x)+0.5
+            self.x=np.arange(x)+0.5 #type: ignore
             self.y=np.arange(y)+0.5
         else:
             self.x=x*1.0+0.5
@@ -97,8 +150,8 @@ class create_psf():
         #self.fDist=None
 
         self.line2d=None
-        self.longPSF=None
-        self.longpsf=None
+        #self.longPSF=None
+        #self.longpsf=None
 
         self.bgNoise=None
 
@@ -111,6 +164,15 @@ class create_psf():
 
 
     def _set_psf_profile(self,prof):
+        """
+        Set the PSF profile.
+
+        Parameters
+        ----------
+        prof : str
+            Profile of the PSF. Options are 'gaussian' or 'moffat'.
+
+        """
         options = ['gaussian','moffat']
         if (options[0] in prof.lower()) | (options[1] in prof.lower()):
             self.psf_profile = prof
@@ -121,6 +183,16 @@ class create_psf():
     def moffat(self,rad):
         """
         Return a moffat profile evaluated at the radii in the input numpy array.
+
+        Parameters
+        ----------
+        rad : 1d numpy array
+            Radii at which to evaluate the moffat profile.
+
+        Returns
+        -------
+        moffat : 1d numpy array
+            Moffat profile evaluated at the input radii.
         """
 
         #normalized flux profile return 1.-(1.+(rad/self.alpha)**2)**(1.-self.beta)
@@ -128,6 +200,21 @@ class create_psf():
         return (self.beta-1)/(np.pi*a2)*(1.+(rad/self.alpha)**2)**(-self.beta)
 
     def gauss2d(self,x,y):
+        """
+        Return a 2d gaussian profile evaluated at the input x and y coordinates.
+
+        Parameters
+        ----------
+        x : 2d numpy array
+            x coordinates at which to evaluate the gaussian profile.
+        y : 2d numpy array
+            y coordinates at which to evaluate the gaussian profile.
+
+        Returns
+        -------
+        g : 2d numpy array
+            2d gaussian profile evaluated at the input coordinates.
+        """
         g2d = Gaussian2D(x_stddev=self.stddev,y_stddev=self.stddev)
         g = g2d(x,y)
         return g
@@ -135,14 +222,20 @@ class create_psf():
 
     def generate_line_psf(self,angle=None,length=None,shiftx=0,shifty=0, verbose=False):
         """
-        Compute the TSF given input rate of motion, angle of motion, length of exposure, and pixelScale.
+        Generate a PSF for a given angle and length.
 
-        Units choice is irrelevant, as long as they are all the same! eg. rate in "/hr, and dt in hr.
-        Angle is in degrees +-90 from horizontal.
-
-        display=True to see the TSF
-
-        useLookupTable=True to use the lookupTable. OTherwise pure moffat is used.
+        Parameters
+        ----------
+        angle : float
+            Angle of the object relative to the x axis
+        length : float
+            Length of trail.
+        shiftx : float
+            Shift in the x direction.
+        shifty : float
+            Shift in the y direction.
+        verbose : bool
+            Verbose output.
         """
 
         if angle is not None:
@@ -190,11 +283,29 @@ class create_psf():
         self.longpsf /= np.nansum(self.longpsf)
 
     def psf_fig(self):
+        """
+        Plot the PSF.
+        """
         plt.figure()
         plt.imshow(self.longpsf,origin='lower')
         plt.colorbar()
 
     def minimizer(self,coeff,image):
+        """
+        Minimizer function for fitting a PSF to an image.
+
+        Parameters
+        ----------
+        coeff : 1d numpy array
+            Parameters for the minimizer.
+        image : 2d numpy array
+            Image to fit the PSF to.
+
+        Returns
+        -------
+        residual : float
+            Residual of the minimizer.
+        """
         #print(coeff)
         if  'moffat' in self.psf_profile:
             self.alpha = coeff[0]
@@ -212,21 +323,34 @@ class create_psf():
             self.source_y = coeff[4]
             #floor = coeff[5]
         self.generate_line_psf(shiftx = self.source_x, shifty = self.source_y)
-        psf = self.longpsf / np.nansum(self.longpsf)
+        psf = self.longpsf / np.nansum(self.longpsf) # type: ignore
         
         diff = abs(image - psf)
         residual = np.nansum(diff)
         #self.residual = residual
         return np.exp(residual)
 
- 
 
     def fit_psf(self,image,limx=10,limy=10):
+        """
+        Fit a PSF profile to the input image.
+
+        Parameters
+        ----------
+        image : numpy array
+            image of target to fit the PSF to 
+        limx : float
+            limit for fitting in the x shift 
+        limy : float
+            limit for fitting in the x shift 
+        """
+        
+
         image -= np.nanmedian(image)
         normimage = image / np.nansum(image)
         anglebs = [self.angle_o*0.6,self.angle_o*1.4]
 
-        if self.psf_profile == 'mofatt':
+        if self.psf_profile == 'moffat':
             coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
             lims = [[0.1,100],[1,100],[self.length_o*0.6,self.length_o*1.4],
                     [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
@@ -234,6 +358,9 @@ class create_psf():
             coeff = [self.stddev,self.length,self.angle,0,0]
             lims = [[0.1,20],[self.length_o*0.6,self.length_o*1.4],
                     [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
+        else:
+            m = 'Incorrect psf_profile, please select from moffat or gaussian.'
+            raise ValueError(m)
         #lims = [[-100,100],[-100,100],[5,20],[-80,80],[-limx,limx],[-limy,limy]]
         #res = least_squares(self.minimizer,coeff,args=normimage,method='trf',x_scale=0.1)
         res = minimize(self.minimizer, coeff, args=normimage, method='Powell',bounds=lims)
@@ -241,6 +368,14 @@ class create_psf():
         self.psf_fit = res
 
     def make_data_psf(self,data_cuts):
+        """
+        Create a PSF using the calibration stars. This does a better job for longer exposures with scintilation.
+
+        Parameters
+        ----------
+        data_cuts : numpy array 
+            cuts of the image that contain the target stars PSF
+        """
         psf_mask = (self.longpsf > 1e-6) * 1
         data_cuts *= psf_mask[np.newaxis,:,:]
         data_cuts[np.isnan(data_cuts)] = 0.0
@@ -271,6 +406,21 @@ class create_psf():
 
 
     def minimize_pos(self,coeff,image):
+        """
+        Minimizer function for fitting the position of the source to an image.
+
+        Parameters
+        ----------
+        coeff : 1d numpy array
+            Parameters for the minimizer.
+        image : 2d numpy array
+            Image to fit the position of the source to.
+
+        Returns
+        -------
+        residual : float
+            Residual of the minimizer.
+        """
         self.generate_line_psf(shiftx = coeff[0], shifty = coeff[1])
         psf = self.longpsf / np.nansum(self.longpsf)
         diff = abs(image - psf)
@@ -278,6 +428,24 @@ class create_psf():
         return np.exp(residual)
         
     def fit_pos(self,image,range=5):
+        """
+        Fit the position of the source to the input image.
+
+        Parameters
+        ----------
+        image : 2d numpy array
+            Image to fit the position of the source to.
+        range : float
+            Range to fit the position of the source over.
+
+        Returns
+        -------
+        source_x : float
+            Source x position.
+        source_y : float
+            Source y position.
+        
+        """
         normimage = image / np.nansum(image)
         coeff = [0,0]
         lims = [[-range,range],[-range,range]]
@@ -288,14 +456,44 @@ class create_psf():
     
         
     def minimize_psf_flux(self,coeff,image):
+        """
+        Minimizer function for fitting the flux of the PSF to an image.
+
+        Parameters
+        ----------
+        coeff : 1d numpy array
+            Parameters for the minimizer.
+        image : 2d numpy array
+            Image to fit the PSF to.
+
+        Returns
+        -------
+        residual : float
+            Residual of the minimizer.
+        """ 
         res = np.nansum(abs(image - self.longpsf*coeff[0]))
         return res
 
     def psf_flux(self,image,output = True):
+        """
+        Fit the flux of the PSF to the input image.
+
+        Parameters
+        ----------
+        image : 2d numpy array
+            Image to fit the PSF to.
+
+        Returns
+        -------
+        flux : float
+            Flux of the PSF.
+        image_residual : 2d numpy array
+            Residual image after subtracting the PSF from the input image.
+        """
         if self.longpsf is None:
             self.generate_line_psf()
         mask = np.zeros_like(self.longpsf)
-        mask[self.longpsf > np.nanpercentile(self.longpsf,70)] = 1
+        mask[self.longpsf > np.nanpercentile(self.longpsf,70)] = 1 # type: ignore
         f0 = np.nansum(image*mask)
         bkg = np.nanmedian(image[~mask.astype(bool)])
         image = image - bkg
