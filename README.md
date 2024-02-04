@@ -12,8 +12,8 @@ To install:
 
 Example reduction for highly trailed 2I Borisov MUSE data:
 ```python
-from cuber import cuber
-ifu = cuber(file='filename',cal_maglim=20,run=True)
+from starkiller import starkiller
+ifu = starkiller(file='filename',cal_maglim=20,run=True)
 ```
 
 ![plot](./figs/2I_MUSE_example.png)
