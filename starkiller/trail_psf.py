@@ -264,7 +264,7 @@ class create_psf():
             #self.line2d=self.line2d[yl:yh+1,xl:xh+1]
 
         else:
-            self.line2d=np.array([[1.0]])
+            self.line2d[int(centy_s),int(centx_s)] = 1
 
         #if line_width > 1:
         #   k = np.zeros((int(line_width),int(line_width)))
@@ -281,6 +281,7 @@ class create_psf():
         self.longPSF /= np.nansum(self.longPSF)
         self.longpsf = downSample2d(self.longPSF,self.repFact)
         self.longpsf /= np.nansum(self.longpsf)
+        self._linepsf = downSample2d(self.line2d,self.repFact)
 
     def psf_fig(self):
         """
@@ -342,7 +343,7 @@ class create_psf():
         limx : float
             limit for fitting in the x shift 
         limy : float
-            limit for fitting in the x shift 
+            limit for fitting in the y shift 
         """
         
 
@@ -352,7 +353,7 @@ class create_psf():
 
         if self.psf_profile == 'moffat':
             coeff = [self.alpha,self.beta,self.length,self.angle,0,0]
-            lims = [[0.1,100],[1,100],[self.length_o*0.6,self.length_o*1.4],
+            lims = [[0.1,100],[1,100],[self.length_o*0.5,self.length_o*1.5],
                     [np.min(anglebs),np.max(anglebs)],[-limx,limx],[-limy,limy]]
         elif self.psf_profile == 'gaussian':
             coeff = [self.stddev,self.length,self.angle,0,0]
@@ -382,7 +383,7 @@ class create_psf():
         medcuts = data_cuts / np.nanmax(data_cuts,axis=(1,2))[:,np.newaxis,np.newaxis]
         sm = np.zeros_like(medcuts)
         for i in range(len(medcuts)):
-            self.fit_pos(medcuts[i])
+            self.fit_pos(medcuts[i],data=False)
             sm[i] = shift(medcuts[i],[-self.source_y,-self.source_x],mode='nearest')
         data_psf = np.nanmedian(sm,axis=0)    
         self.data_psf = data_psf / np.nansum(data_psf)
@@ -405,7 +406,7 @@ class create_psf():
 
 
 
-    def minimize_pos(self,coeff,image):
+    def minimize_pos(self,coeff,image,data=True):
         """
         Minimizer function for fitting the position of the source to an image.
 
@@ -421,13 +422,21 @@ class create_psf():
         residual : float
             Residual of the minimizer.
         """
-        self.generate_line_psf(shiftx = coeff[0], shifty = coeff[1])
+
+        if ('data' in self.psf_profile) & data:
+            if self.data_psf is not None:
+                self.longpsf = shift(self.data_psf,[coeff[1],coeff[0]],mode='nearest')
+            else:
+                raise ValueError('No data psf defined! Use the make_data_psf function first.')
+        else:
+            self.generate_line_psf(shiftx = coeff[0], shifty = coeff[1])
+
         psf = self.longpsf / np.nansum(self.longpsf)
         diff = abs(image - psf)
         residual = np.nansum(diff)
         return np.exp(residual)
         
-    def fit_pos(self,image,range=5):
+    def fit_pos(self,image,range=5,data=True):
         """
         Fit the position of the source to the input image.
 
@@ -449,9 +458,13 @@ class create_psf():
         normimage = image / np.nansum(image)
         coeff = [0,0]
         lims = [[-range,range],[-range,range]]
-        res = minimize(self.minimize_pos,coeff, args=normimage, method='Powell',bounds=lims)
+        res = minimize(self.minimize_pos,coeff, args=(normimage,data), method='Powell',bounds=lims)
         self.source_x = res.x[0]
         self.source_y = res.x[1]
+        if ('data' in self.psf_profile) & data:
+            self.longpsf = self.data_psf
+        else:
+            self.generate_line_psf(shiftx = 0, shifty = 0)
 
     
         
@@ -507,6 +520,12 @@ class create_psf():
         res = minimize(self.minimize_psf_flux,f0,args=(image),method='Nelder-Mead')
         self.flux = res.x[0]
         self.image_residual = image - self.longpsf*self.flux
+
+        if 'data' in self.psf_profile:
+                self.longpsf = self.data_psf
+        else:
+            self.generate_line_psf(shiftx=0,shifty=0)
+
         #if output:
         return self.flux, self.image_residual
 

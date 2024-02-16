@@ -40,6 +40,7 @@ from scipy import signal
 from .helpers import *
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
+from .satellite_finder import sat_killer
 import pysynphot as S
 from scipy.interpolate import interp1d
 
@@ -48,12 +49,16 @@ warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
 
 
 class starkiller():
+	"""
+	Models the stars in the IFU and subtracts them from the cube, to create a differenced IFU.
+
+	"""
 	def __init__(self,file,trail=True,model_maglim=25,cal_maglim=18,savepath=None,
 				 catalog=None,spec_catalog='ck',key_filter=None,ref_filter=None,
 				 psf_profile='gaussian',wcs_correction=True,psf_preference='data',
 				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
-				 show_specs=False,fuzzy=False):
+				 show_specs=False,fuzzy=False,satellite=False,force_flux_correction=False):
 		"""
 		Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
 
@@ -129,6 +134,8 @@ class starkiller():
 		self._wavelength_sol = wavelength_sol
 		self._show_specs = show_specs
 		self._fuzzy_field = fuzzy
+		self._force_flux_correction = force_flux_correction
+		self._search_satellite = satellite
 
 		if (key_filter is None) & (catalog is None):
 			self.key_filter = 'G'
@@ -192,8 +199,6 @@ class starkiller():
 	def _get_cat(self):
 		"""
 		Load a catalogue, if none is specified then Gaia DR3 is used.
-
-
 		"""
 		if self.cat is None:
 			self.cat = get_gaia_region([self.ra],[self.dec],size=50)
@@ -201,9 +206,9 @@ class starkiller():
 			ind = self.cat.G_mag.values < self.model_maglim
 			if self.verbose:
 				print(f'Number of sources brighter than {self.model_maglim}: {sum(ind)}')
-			if np.sum(ind) < 2:
-				m = f'!!! No sources brighter than {self.model_maglim} !!! \nMaximum maglim is {np.min(self.cat.G_mag.values[3])}'
-				raise ValueError(m)
+			#if np.sum(ind) < 2:
+				#m = f'!!! No sources brighter than {self.model_maglim} !!! \nMaximum maglim is {np.min(self.cat.G_mag.values[3])}'
+				#raise ValueError(m)
 			self.cat = self.cat.iloc[ind]
 		else:
 			if (self.ref_filter is None):
@@ -316,19 +321,6 @@ class starkiller():
 		"""
 		Find sources in the image using the cluster algorithm. 
 		"""
-		blur = gaussian_filter(self.image,5)
-		mean, med, std = sigma_clipped_stats(blur, sigma=3.0)
-		daofind = DAOStarFinder(fwhm=10,theta = self.angle,ratio=.5, threshold=3*std,exclude_border=True)
-		self._dao_s = daofind(blur - med)
-		if len(self._dao_s) < 2:
-			raise ValueError('Could not find sources in image, try setting trail=False')
-
-		if self.plot:
-			plt.figure()
-			plt.title('Sources found in image')
-			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,84),origin='lower')
-			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
-
 		labeled, nr_objects = label(self.bright_mask > 0) 
 		obj_size = []
 		for i in range(nr_objects):
@@ -435,8 +427,6 @@ class starkiller():
 		"""
 		Fill the parameters for the cube simulator.
 		"""
-		self._fill_params_psf()
-		self._fill_params_cube()
 		self.y_length = 10 
 		self.x_length =10 
 		self.angle = 0
@@ -592,18 +582,6 @@ class starkiller():
 		plot : boolean
 			Whether or not to plot the transformed coordinates.
 		"""
-		xx,yy = transform_coords(self.cat.x.values,self.cat.y.values,self.wcs_shift,self.image)
-		self.cat['x'] = xx
-		self.cat['y'] = yy
-		self.cat['xint'] = (self.cat['x'].values + 0.5).astype(int)
-		self.cat['yint'] = (self.cat['y'].values + 0.5).astype(int)
-		
-		if plot:
-			plt.figure()
-			plt.title('Matching cube sources with catalogue')
-			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
-			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'o',ms=7,label='DAO')
-			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
 		if plot is None:
 			plot = self.plot
 
@@ -813,8 +791,6 @@ class starkiller():
 		Isolate the calibration sources in the image. Creates a cal_cuts variable containing the cutouts and good_cals.
 
 		"""
-		self.cal_cuts = self.cube[:,self.cals.yint.values-self.y_length:self.cals.yint.values+self.y_length+1,
-								 self.cals.xint.values-self.x_length:self.cals.xint.values+self.x_length+1]
 		cals = self.cat.iloc[self.cat['cal_source'].values == 1]
 		star_cuts, good = get_star_cuts(self.x_length,self.y_length,self.image,cals)
 		self.cal_cuts = star_cuts 
@@ -906,6 +882,8 @@ class starkiller():
 			m = (f"!!! Large difference of {np.round(diff,2)} between model_psf and data_psf!!!\nUsing the data_psf, override by setting psf_preference='model'")
 			print(m)
 			self.psf_profile += ' data'
+			self.psf.psf_profile += ' data'
+
 
 	def _fine_psf_shift(self,shifts,plot=None):
 		"""
@@ -998,7 +976,7 @@ class starkiller():
 		indo = deepcopy(ind)
 		indo[ind] = isolated
 
-		indo = indo & (self.cat['fuzz'].values == 0) # don't know why this needs to be 1...
+		indo = indo & (self.cat['fuzz'].values == 0) 
 		self.cat['containment'] = 0
 		self.cat.loc[ind,'containment'] = cont
 
@@ -1072,7 +1050,7 @@ class starkiller():
 		Extracts the calibration spectra. Adds in the cal specs variables.
 		"""
 		self.specs = get_spec(self.cube,self.cals.xint.values,self.cals.yint.values,self.x_length,self.y_length,self.psf_param,self.lam)
-		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf_param,self.lam,num_cores=self.numcores)
+		cal_specs, residual, cands_off = get_specs(self.cals.iloc[self.good_cals],self.cube,self.x_length,self.y_length,self.psf,self.lam,num_cores=self.numcores)
 
 		cal_model, cors, ebvs, redshift = spec_match(cal_specs,self.mags[self.good_cals],self.filts,model_type=self.spec_cat,num_cores=self.numcores)
 		
@@ -1099,7 +1077,7 @@ class starkiller():
 
 			ind = np.argsort(self.cat[self.ref_filter].values)#
 			conds = np.where(((self.cors[ind] > corr_limit) | (self.cat['cal_source'].values[ind])) & (self.cat[self.ref_filter].values <= self.cal_maglim) & (self.cat.fuzz.values == 0) )[0]
-			if len(conds) >= 2:
+			if (len(conds) >= 2) | self._force_flux_correction:
 				diffs = []
 				for i in ind[conds]:
 					diff = (self.models[i].sample(self.specs[i].wave) * self.cat['containment'].values[i]) / self.specs[i].flux
@@ -1127,7 +1105,7 @@ class starkiller():
 
 			self.flux_corr = pf#[:,np.newaxis,np.newaxis]
 
-			if (len(conds) >= 2) & self.plot:
+			if ((len(conds) >= 2) | self._force_flux_correction) & self.plot:
 				plt.figure()
 				plt.title('Flux correction')
 				for i in range(len(diffs)):
@@ -1143,6 +1121,7 @@ class starkiller():
 				plt.ylabel(r'Flux ratio (Model $/$ MUSE)')
 				plt.xlabel(r'Wavelength ($\rm \AA$)')
 				plt.ylim(0,2)
+				plt.savefig(f'{self.savepath}flux_correction.png',dpi=300)
 
 
 			self._rerun_model_fit()
@@ -1177,7 +1156,7 @@ class starkiller():
 		if 'data' in self.psf_profile:
 			data_psf = self.psf.data_psf
 		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,
-											 self.psf_param,self.lam,num_cores=self.numcores,
+											 self.psf,self.lam,num_cores=self.numcores,
 											 data_psf=data_psf)
 		self.cat = cat_off
 		self.specs = specs
@@ -1217,6 +1196,37 @@ class starkiller():
 		if ~show:
 			plt.ion()
 
+
+	def _check_satellites(self):
+		if self._search_satellite:
+			if self.verbose:
+				print('Checking for satellites')
+			self.satellite = sat_killer(self.cube,self.psf,num_cores=self.numcores,wavelength=self.lam)
+			if self.plot:
+				self.satellite.plot_lines()
+			if self.satellite.sat_num == 0:
+				print('!!! No satellite detected !!!')
+				self._search_satellite = False
+
+	def force_spec(self,x,y,fitpos=True,cube=None):
+		if (type(x) == float) | (type(x) == int):
+			x = [x]; y = [y]
+		if cube is None:
+			cube = self.cube
+		cat = pd.DataFrame([])
+		cat['x'] = x; cat['y'] = y
+		cat['xint'] = cat['x'].values.astype(int); cat['yint'] = cat['y'].values.astype(int)
+		cat['id'] = np.arange(0,len(cat['x'].values))
+
+
+		specs, residual, cat_off = get_specs(cat,cube,self.x_length,self.y_length,
+											 psf=deepcopy(self.psf),lam=self.lam,num_cores=self.numcores,
+											 fitpos=fitpos)
+		cat_off['spec'] = 0
+		for i in range(len(specs)):
+			cat_off['spec'].iloc[i] = specs[i]
+		return cat_off
+
 	def make_scene(self):
 		"""
 		Makes the scene of the sources in the cube. Adds in the scene variable.
@@ -1225,7 +1235,10 @@ class starkiller():
 			data = True
 		else:
 			data = False
-		scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data)
+		if self._search_satellite:
+			scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data,satellite=self.satellite)
+		else:
+			scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data)
 		flux = []
 		for i in range(len(self.cat)):
 			#f = downsample_spec(self.models[i],self.lam)
@@ -1277,7 +1290,7 @@ class starkiller():
 		plt.plot(x,y,'C1.')
 
 		plt.tight_layout()
-		name = self.savepath +  self.file.split('/')[-1].split('.fits')[0] + '_sub.png'
+		name = self.savepath + self.file.split('/')[-1].split('.fits')[0] + '_sub.png'
 		plt.savefig(name,bbox_inches='tight',dpi=300)
 		#plt.close()
 
@@ -1330,6 +1343,28 @@ class starkiller():
 		plt.plot(self.cat['x'].values[ind],self.cat['y'].values[ind],'C1*',label='Cal sources')
 		plt.legend()
 
+	def plot_ebv(self):
+		plt.figure(figsize=(11,4))
+
+		plt.subplot(121)
+		plt.hist(self.ebvs,alpha=0.5,bins=20)
+		plt.xlabel(r'E$($B$-$V$)$',fontsize=12)
+		plt.ylabel('Occurrence',fontsize=12)
+
+
+		plt.subplot(122)
+		plt.imshow(self.image,cmap='gray_r',vmin=vmin,vmax=vmax+200,origin='lower',alpha=0.5)
+		plt.scatter(self.cat.x.values,self.cat.y.values,c=self.ebvs,vmax=.2,s=5,facecolors='none',cmap='viridis')
+		col = plt.colorbar(extend='max')
+		col.ax.set_ylabel(r'E$($B$-$V$)$',fontsize=12)
+		col.locator = ticker.MaxNLocator(nbins=4)
+		col.update_ticks()
+
+		plt.xlabel('X position (pixels)',fontsize=12)
+		plt.ylabel('Y position (pixels)',fontsize=12)
+
+		
+
 	def plot_psf(self):
 		"""
 		Plot the psf used for the reduction.
@@ -1345,7 +1380,7 @@ class starkiller():
 
 		plt.subplot(133)
 		plt.imshow(self.psf.longpsf - self.psf.data_psf)
-		plt.colorbar()
+		#plt.colorbar()
 		plt.title(self.psf_profile + ' $-$ Data PSF')
 
 	def save_hdu(self):
@@ -1412,6 +1447,9 @@ class starkiller():
 				print('Extracted spectra')
 			
 			self.fit_spec_residual()
+
+			self._check_satellites()
+
 			self.make_scene()
 			if self.verbose:
 				print('Made scene')
@@ -1421,5 +1459,7 @@ class starkiller():
 				print('Saved reduction')
 		except Exception:
 			print(traceback.format_exc())
+
+
 
 

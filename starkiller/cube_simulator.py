@@ -16,10 +16,39 @@ class cube_simulator():
     
     Atributes
     ---------
+    xdim : int
+        Dimension of the output cube in the x direction
+    ydim : int
+        Dimension of the output cube in the y direction
+    sim : np.array
+        The simulated data cube
+    weights : np.array
+        The simulated weighted image
+    psf : psf class
+        The PSF class containing the PSF fit to the data cube
+    cat : pd.dataframe
+        The catalogue containing the positions of all sources to simulate
+    repFact : int
+        Replication factor controls the supersampling and downsampling
+    padding : int
+        Number of pixels to pad the simulated cube
+    X : np.array
+        The X axis of the simulated cube
+    Y : np.array
+        The Y axis of the simulated cube
+    Sim : np.array
+        The simulated cube at higher resolution then downsampled
+    seeds : np.array
+        The PSF seed images used to create the simulated cube
+    all_psfs : np.array
+        The sum of all the PSF seed images
+    image : np.array
+        Median stack of the input data cube
+
 
 
     """
-    def __init__(self,cube,psf=None,catalogue=None,repFact=10,padding=20,datapsf=False):
+    def __init__(self,cube,psf=None,catalogue=None,repFact=10,padding=20,datapsf=False,satellite=None):
         """
         Parameters
         ----------
@@ -43,6 +72,7 @@ class cube_simulator():
         self.cat = catalogue
         self.repFact = repFact
         self.padding = padding
+        self.satellite = satellite
 
         if datapsf:
             self.psf.longPSF = self.psf.data_PSF
@@ -50,6 +80,8 @@ class cube_simulator():
 
         self._make_super_sample()
         self._create_seeds()
+        if self.satellite is not None:
+            self._create_satellite_seeds()
     
     def _stack_median(self):
         """
@@ -79,7 +111,6 @@ class cube_simulator():
         Create the "PSF seed" images from which the cube will be constructed.
         """
         seeds = []
-        Seeds = []
         x = self.cat.x.values #+ self.padding
         y = self.cat.y.values #+ self.padding
         for i in range(len(self.cat)):
@@ -99,6 +130,27 @@ class cube_simulator():
         #self.Seeds = self.Seeds[:,self.padding*self.repFact:-self.padding*self.repFact,self.padding*self.repFact:-self.padding*self.repFact]
         self.seeds = self.seeds[:,self.padding:-self.padding,self.padding:-self.padding]
         self.all_psfs = np.nansum(self.seeds,axis=0)
+
+    def _create_satellite_seeds(self):
+        seeds = []
+        x = self.satellite.satcat.x.values
+        y = self.satellite.satcat.y.values
+        for i in range(len(x)):
+            xind = np.argmin(abs(self.X - x[i]))
+            yind = np.argmin(abs(self.Y - y[i]))
+            s = np.zeros_like(self.Sim) 
+            s[yind,xind] = 1
+            psf = self.satellite.sat_psfs[i]
+            s = signal.fftconvolve(s,psf.longPSF,mode='same')
+            s = downSample2d(s,self.repFact)
+            s = s / np.nansum(s)
+            seeds += [s]
+        #self.Seeds = np.array(Seeds)
+        self.satellite_seeds = np.array(seeds)
+        
+        # remove buffer
+        self.satellite_seeds = self.satellite_seeds[:,self.padding:-self.padding,self.padding:-self.padding]
+
         
     def mag_image(self):
         """
@@ -122,6 +174,10 @@ class cube_simulator():
         for i in range(len(flux)):
             seed = self.seeds[i]
             self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
+        if self.satellite is not None:
+            for i in range(len(self.satellite_seeds)):
+                seed = self.satellite_seeds[i]
+                self.sim += seed[np.newaxis,:,:] * self.satellite.sat_fluxes[i][:,np.newaxis,np.newaxis]
 
     def make_weights(self,weights):
         """

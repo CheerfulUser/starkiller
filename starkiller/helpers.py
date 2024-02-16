@@ -246,11 +246,14 @@ def get_star_cuts(x_length,y_length,image,cat,norm=False):
     pad = np.nanmax([y_length,x_length])*2
     image = np.pad(image,pad) 
     image[image==0] = np.nan
-    x = cat['xint'].values + pad; y = cat['yint'].values + pad
+    try:
+        x = cat['xint'].values + pad; y = cat['yint'].values + pad
+    except:
+        x = [cat['xint'] + pad]; y = [cat['yint'] + pad]
     star_cuts = []
     good = []
 
-    for i in range(len(cat)):
+    for i in range(len(x)):
         c = image[y[i]-y_length:y[i]+y_length+1,x[i]-x_length:x[i]+x_length+1]
         
         my,mx = np.where(np.nanmax(c) == c)
@@ -310,7 +313,7 @@ def replace_cube(cube,cut,x_length,y_length,cat):
     return replace
 
 
-def psf_spec(cube,psf_param,data_psf=None):
+def psf_spec(cube,psf,data_psf=None,fitpos=True):
     """
     Create a PSF and fit it to the input cube. Then calculate the flux of the source in the image.
 
@@ -334,34 +337,38 @@ def psf_spec(cube,psf_param,data_psf=None):
     yoff : float
         Y offset of the source from the PSF fit.
     """
-    if data_psf is None:
-        psf_tuning = '' 
-    else:
-        psf_tuning = ' data'
-    if len(psf_param) > 3:
-        trip = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
-                          beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
-                          psf_profile='moffat'+psf_tuning)
-        l = psf_param[2]
-    else:
-        trip = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
-                          length=psf_param[1],angle=psf_param[2],
-                          psf_profile='gaussian'+psf_tuning)
-        l = psf_param[1]
+    #if data_psf is None:
+    #    psf_tuning = '' 
+    #else:
+    #    psf_tuning = ' data'
+    #if len(psf_param) > 3:
+    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
+    #                      beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
+    #                      psf_profile='moffat'+psf_tuning)
+    #    l = psf_param[2]
+    #else:
+    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
+    #                      length=psf_param[1],angle=psf_param[2],
+    #                      psf_profile='gaussian'+psf_tuning)
+       
+    l = psf.length
     if l < 5:
-        r = 1
+        r = 2
     else:
-        r = 5
-    trip.fit_pos(np.nanmean(cube,axis=0),range=r)
-    xoff = trip.source_x; yoff = trip.source_y
+        r = 1
+    if fitpos:
+        psf.fit_pos(np.nanmean(cube,axis=0),range=r)
+        xoff = psf.source_x; yoff = psf.source_y
+    else:
+        xoff = 0; yoff = 0
     
     
-    #flux,res = zip(*Parallel(n_jobs=num_cores)(delayed(trip.psf_flux)(image) for image in cube))
+    #flux,res = zip(*Parallel(n_jobs=num_cores)(delayed(psf.psf_flux)(image) for image in cube))
     flux = []
     res = []
-    trip.data_psf = data_psf
+    #psf.data_psf = data_psf
     for image in cube:
-        f,r = trip.psf_flux(image)
+        f,r = psf.psf_flux(image)
         flux += [f]
         res += [r]
     
@@ -384,7 +391,7 @@ def cube_cutout(cube,cat,x_length,y_length):
     return cuts
 
 
-def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores,data_psf=None):
+def get_specs(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None,fitpos=True):
     """
     Get the spectra of sources in the input cube.
 
@@ -422,7 +429,7 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores,data_psf=None)
     specs = []
     residual = []
     sub_cube = deepcopy(cube)
-    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf_params,data_psf) for cut in cuts))
+    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf,data_psf,fitpos) for cut in cuts))
     #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
     #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
     #for i in range(len(cuts)):
@@ -440,6 +447,126 @@ def get_specs(cat,cube,x_length,y_length,psf_params,lam,num_cores,data_psf=None)
         specs += [spec]
 
     return specs, residual, cat
+
+
+def get_specs2(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None):
+    """
+    Get the spectra of sources in the input cube.
+
+    Parameters
+    ----------
+    cat : pandas DataFrame
+        Catalogue of sources containing their coordinates.
+    cube : numpy ndarray
+        Input image containing the sources.
+    x_length : int
+        Length of the x dimension of the cutout
+    y_length : int
+        Length of the y dimension of the cutout 
+    psf_params : numpy ndarray
+        Parameters used to create the PSF. [0] is the FWHM; [1] is the length of the PSF; [2] is the angle of the PSF.
+    lam : numpy ndarray
+        Wavelength array of the input cube.
+    num_cores : int
+        Number of cores to use in the fitting process.
+    data_psf : numpy ndarray
+        PSF to use in the fitting process. The default is None, which means a PSF will be created from the input image.
+
+    Returns
+    -------
+    specs : list
+        List of spectra for each source in the input catalogue.
+    residual : numpy ndarray
+        Residual of the PSF fit to the image.
+    cat : pandas DataFrame
+        Catalogue of sources containing their coordinates and offsets from the PSF fit.
+    """
+    cuts = cube_cutout(cube,cat,x_length,y_length)
+    #num_cores = multiprocessing.cpu_count() - 3
+    specs = []
+    residual = []
+    sub_cube = deepcopy(cube)
+    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf,data_psf) for cut in cuts))
+    #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
+    #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
+    #for i in range(len(cuts)):
+    #   f, r, xo, yo = psf_spec(cuts[i],psf_params)
+    #   flux[i] = f; res[i] = r; xoff[i] = xo; yoff[i] = yo
+
+    residual = np.array(res)
+    cat['x_offset'] = xoff
+    cat['y_offset'] = yoff
+    cat['x'] = cat['xint'].values + xoff
+    cat['y'] = cat['yint'].values + yoff
+    for i in range(len(cuts)):
+        #flux, res, xoff, yoff = psf_spec(cuts[i],psf_params,num_cores=num_cores)
+        spec = S.ArraySpectrum(lam,flux[i]*1e-20,fluxunits='flam',name=cat.iloc[i].id)
+        specs += [spec]
+
+    return specs, residual, cat
+
+
+def psf_spec2(cube,psf,data_psf=None):
+    """
+    Create a PSF and fit it to the input cube. Then calculate the flux of the source in the image.
+
+    Parameters
+    ----------
+    cube : numpy ndarray
+        Image to calculate the flux of.
+    psf_param : numpy ndarray
+        Parameters used to create the PSF. [0] is the FWHM; [1] is the length of the PSF; [2] is the angle of the PSF.
+    data_psf : numpy ndarray
+        PSF to use in the fitting process. The default is None, which means a PSF will be created from the input image.
+
+    Returns
+    -------
+    flux : float
+        Flux of the source in the image.
+    residual : numpy ndarray
+        Residual of the PSF fit to the image.
+    xoff : float
+        X offset of the source from the PSF fit.
+    yoff : float
+        Y offset of the source from the PSF fit.
+    """
+    #if data_psf is None:
+    #    psf_tuning = '' 
+    #else:
+    #    psf_tuning = ' data'
+    #if len(psf_param) > 3:
+    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
+    #                      beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
+    #                      psf_profile='moffat'+psf_tuning)
+    #    l = psf_param[2]
+    #else:
+    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
+    #                      length=psf_param[1],angle=psf_param[2],
+    #                      psf_profile='gaussian'+psf_tuning)
+    l = psf.length
+    if l < 5:
+        r = 1
+    else:
+        r = 1
+    psf.fit_pos(np.nanmean(cube,axis=0),range=r)
+    xoff = psf.source_x; yoff = psf.source_y
+    
+    
+    #flux,res = zip(*Parallel(n_jobs=num_cores)(delayed(psf.psf_flux)(image) for image in cube))
+    flux = []
+    res = []
+    psf.data_psf = data_psf
+    for image in cube:
+        f,r = psf.psf_flux(image)
+        flux += [f]
+        res += [r]
+    
+    flux = np.array(flux)
+    flux[flux<0] = 0
+    residual = np.array(res)
+    xoff = np.nanmedian(np.array(xoff)); yoff = np.nanmedian(np.array(yoff))
+    return flux,residual, xoff, yoff
+
         
 def downsample_spec(spec,target_lam):
     """
@@ -567,7 +694,7 @@ def match_spec_to_model(spec,catalog='ck+'):
             print('comparing precise models')
             temp = int(model.name.split('_')[-2])
             if temp <= 7000:
-                path = f'{package_directory}data/t02_st/*'
+                path = f'{package_directory}data/marcs-t02/*'
                 model_files = np.array(glob(path))
                 
                 temps = np.array([int(x.split('/')[-1][1:5]) for x in model_files])
@@ -593,7 +720,8 @@ def match_spec_to_model(spec,catalog='ck+'):
         path = f'{package_directory}data/eso_spec/*'
         model, cor = _compare_catalog(path,lam,flux)
 
-    redshift, _ = calc_redshift(spec)
+    #redshift, _ = calc_redshift(spec)
+    redshift = 0
     #model = model.redshift(-redshift)
 
     return model, cor, redshift
@@ -784,14 +912,12 @@ def parallel_psf_fit(image,psf,psf_profile):
     shifts : numpy ndarray
         PSF fit offsets.
     """
-    if 'moffat' in psf_profile:
-        params = np.array([psf.alpha,psf.beta,psf.length,psf.angle])
-        shifts = np.array([psf.source_x,psf.source_y])
-    elif 'gaussian' in psf_profile:
-        params = np.array([psf.stddev,psf.length,psf.angle])
-        shifts = np.array([psf.source_x,psf.source_y])
-    return params, shifts
-    psf.fit_psf(image)
+    #xlims = image.shape[1] / 3
+    #ylims = image.shape[0] / 3
+    #if xlims < 10: xlims=10
+    #if ylims < 10: ylims=10
+
+    psf.fit_psf(image)#,limx=xlims,limy=ylims)
     psf.generate_line_psf()
     if 'moffat' in psf_profile:
         params = np.array([psf.alpha,psf.beta,psf.length,psf.angle])
@@ -832,7 +958,7 @@ def calc_redshift(spec):
         Hb
         NaD
         Ha
-        CaII triplet (I II III)
+        CaII psflet (I II III)
 
     Parameters
     ----------
@@ -864,7 +990,7 @@ def calc_redshift(spec):
         cont = []
         dip = []
         for i in range(len(em)):
-            cont += [spec.sample(em[i]+20)]
+            cont += [np.nanmedian(spec.sample(np.arange(em[i]+20,em[i]+40)))]
             dip += [spec.sample(em[i])/cont[i] - 1]
 
         mod = []
@@ -962,7 +1088,7 @@ def plot_z_shifts(spec):
     axs['C'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['NaD']['shift'],b=fitted['NaD']['cor']),(.05,.1), 
                       xycoords='axes fraction')
 
-    axs['D'].set_title(r'Ca II triplet I')
+    axs['D'].set_title(r'Ca II psflet I')
     axs['D'].plot(fitted['CaII_I']['wave'],fitted['CaII_I']['flux'])
     mod = fitted['CaII_I']['fit'](fitted['CaII_I']['wave'])
     axs['D'].plot(fitted['CaII_I']['wave'],mod,'--')
@@ -971,7 +1097,7 @@ def plot_z_shifts(spec):
     axs['D'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_I']['shift'],b=fitted['CaII_I']['cor']),(.05,.1), 
                       xycoords='axes fraction')
 
-    axs['E'].set_title(r'Ca II triplet II')
+    axs['E'].set_title(r'Ca II psflet II')
     axs['E'].plot(fitted['CaII_II']['wave'],fitted['CaII_II']['flux'])
     mod = fitted['CaII_II']['fit'](fitted['CaII_II']['wave'])
     axs['E'].plot(fitted['CaII_II']['wave'],mod,'--')
@@ -979,7 +1105,7 @@ def plot_z_shifts(spec):
     axs['E'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_II']['shift'],b=fitted['CaII_II']['cor']),(.05,.1), 
                       xycoords='axes fraction')
 
-    axs['F'].set_title(r'Ca II triplet III')
+    axs['F'].set_title(r'Ca II psflet III')
     axs['F'].plot(fitted['CaII_III']['wave'],fitted['CaII_III']['flux'])
     mod = fitted['CaII_III']['fit'](fitted['CaII_III']['wave'])
     axs['F'].plot(fitted['CaII_III']['wave'],mod,'--')
