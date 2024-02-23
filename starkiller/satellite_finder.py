@@ -14,8 +14,6 @@ class sat_killer():
     def __init__(self,cube,psf,wavelength=None,sat_thickness=17,sat_sigma=15,y_close=5,angle_close=2,num_cores=5,run=True):
         self.cube = cube
         self.star_psf = psf
-        self._make_image()
-        self._set_threshold(sat_sigma)
         self.thickness = sat_thickness
         self.y_close = y_close
         self.angle_close = angle_close
@@ -23,6 +21,8 @@ class sat_killer():
         self.wavelength = wavelength
 
         if run:
+            self._make_image()
+            self._set_threshold(sat_sigma)
             self._dilate()
             self._edges()
             self._lines()
@@ -154,14 +154,17 @@ class sat_killer():
 
     def plot_lines(self):
         plt.figure()
-        plt.imshow(self.image,origin='lower',vmax=10,vmin=0)
+        plt.imshow(self.image,origin='lower',cmap='gray',vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,95))
         #for line in self.lines:
         #    x1, y1, x2, y2 = line[0]
         #    plt.plot([x1,x2],[y1,y2],'C1')
+        counter = 1
         for c in self.streak_coef:
             xx = np.arange(0,self.image.shape[1],0.5)
             yy = xx*c[0] + c[1]
-            plt.plot(xx,yy,'C1')
+            plt.plot(xx,yy,'C1',label=f'Sat {counter}')
+            counter += 1
+        plt.legend()
         plt.ylim(-0.5,self.image.shape[1]+0.5)
         
     def _find_center(self):
