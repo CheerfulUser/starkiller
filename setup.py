@@ -32,7 +32,8 @@ REQUIRED = ['numpy',
             'photutils',
             'joblib',
             'scikit-image',
-            'multiprocess']
+            'multiprocess',
+            'opencv-python']
 
 # What packages are optional?
 EXTRAS = {
