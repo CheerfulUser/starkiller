@@ -201,7 +201,11 @@ class starkiller():
 		Load a catalogue, if none is specified then Gaia DR3 is used.
 		"""
 		if self.cat is None:
-			self.cat = get_gaia_region([self.ra],[self.dec],size=50)
+			origin = np.array(self.wcs.all_pix2world(0,0,0,0))[:2]
+			corner = np.array(self.wcs.all_pix2world(self.image.shape[1],self.image.shape[0],0,0))[:2]
+			radius = np.sqrt((origin[0] - corner[0])**2 + (origin[1] - corner[1])**2) / 2 
+			size = Angle(radius * 1.2, "deg")
+			self.cat = get_gaia_region([self.ra],[self.dec],size=size.arcsec)
 			self.cat = self.cat.sort_values('G_mag')
 			ind = self.cat.G_mag.values < self.model_maglim
 			if self.verbose:
@@ -326,7 +330,8 @@ class starkiller():
 		for i in range(nr_objects):
 			obj_size += [np.sum(labeled==i)]
 		obj_size = np.array(obj_size)
-		targs = np.where((obj_size > 100) & (obj_size<1e4))[0]
+		image_size = self.image.shape[0] * self.image.shape[1]
+		targs = np.where((obj_size > image_size*1e-3) & (obj_size<image_size*0.1))[0]
 		#good = []
 		#for i in range(len(targs)):
 		#	im = (labeled == targs[i]) * 1
@@ -862,7 +867,7 @@ class starkiller():
 		self._isolate_cals()
 
 		ind = self.cat.containment.values[self.cat.cal_source.values > 0] > data_containment_lim
-		if sum(ind) > 0:
+		if (sum(ind) >= 2) | (self.force_flux_correction):
 			#cuts = deepcopy(self.cal_cuts[ind])
 			#cuts[cuts == 0] = np.nan
 			self.psf.make_data_psf(self.cal_cuts[ind])
@@ -1076,7 +1081,9 @@ class starkiller():
 			#cors[(self.cat['cal_source'].values == 1)][~self.good_cals] = 0
 
 			ind = np.argsort(self.cat[self.ref_filter].values)#
-			conds = np.where(((self.cors[ind] > corr_limit) | (self.cat['cal_source'].values[ind])) & (self.cat[self.ref_filter].values <= self.cal_maglim) & (self.cat.fuzz.values == 0) )[0]
+			conds = np.where(((self.cors[ind] > corr_limit) | (self.cat['cal_source'].values[ind])) & 
+							 (self.cat[self.ref_filter].values <= self.cal_maglim) & (self.cat.fuzz.values == 0) )[0]
+
 			if (len(conds) >= 2) | self._force_flux_correction:
 				diffs = []
 				for i in ind[conds]:
@@ -1088,18 +1095,16 @@ class starkiller():
 				if np.nansum(diffs) < 1:
 					print('!!!! problems all things are NaN!!!')
 				fin = np.where(np.isfinite(diff))
-				poly_param = np.polyfit(self.lam[fin],diff[fin],order)
-				pf = np.polyval(poly_param,self.lam)
+				#poly_param = np.polyfit(self.lam[fin],diff[fin],order)
+				#pf = np.polyval(poly_param,self.lam)
 
 				ss = savgol_filter(diff,401,3)
 
 				good = ~sigma_clip(abs(ss - diff),sigma=3).mask
 				ss = savgol_filter(diff[good],401,3)
 				filled = interp1d(self.lam[good],ss,bounds_error=False,fill_value='extrapolate',kind='linear')
-				ss = filled(self.lam)
+				pf = filled(self.lam)
 
-
-				pf = ss 
 			else:
 				pf = np.ones_like(self.lam)
 
