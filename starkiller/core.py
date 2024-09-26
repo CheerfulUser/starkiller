@@ -867,7 +867,7 @@ class starkiller():
 		self._isolate_cals()
 
 		ind = self.cat.containment.values[self.cat.cal_source.values > 0] > data_containment_lim
-		if (sum(ind) >= 2) | (self.force_flux_correction):
+		if (sum(ind) >= 2) | (self._force_flux_correction):
 			#cuts = deepcopy(self.cal_cuts[ind])
 			#cuts[cuts == 0] = np.nan
 			self.psf.make_data_psf(self.cal_cuts[ind])
