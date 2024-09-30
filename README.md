@@ -8,7 +8,8 @@ The output fits file has the format:
 
 
 To install:
-`pip install git+https://github.com/CheerfulUser/starkiller.git 
+`pip install git+https://github.com/CheerfulUser/starkiller.git`
+
 
 Example reduction for highly trailed 2I Borisov MUSE data:
 ```python
