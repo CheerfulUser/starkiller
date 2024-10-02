@@ -338,18 +338,18 @@ def psf_spec(cube,psf,data_psf=None,fitpos=True):
         Y offset of the source from the PSF fit.
     """
     #if data_psf is None:
-    #    psf_tuning = '' 
+    #   psf_tuning = '' 
     #else:
-    #    psf_tuning = ' data'
+    #   psf_tuning = ' data'
     #if len(psf_param) > 3:
-    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
-    #                      beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
-    #                      psf_profile='moffat'+psf_tuning)
-    #    l = psf_param[2]
+    #   psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
+    #             beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
+    #             psf_profile='moffat'+psf_tuning)
+    #   l = psf_param[2]
     #else:
-    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
-    #                      length=psf_param[1],angle=psf_param[2],
-    #                      psf_profile='gaussian'+psf_tuning)
+    #   psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
+    #             length=psf_param[1],angle=psf_param[2],
+    #             psf_profile='gaussian'+psf_tuning)
        
     l = psf.length
     if l < 5:
@@ -531,18 +531,18 @@ def psf_spec2(cube,psf,data_psf=None):
         Y offset of the source from the PSF fit.
     """
     #if data_psf is None:
-    #    psf_tuning = '' 
+    #   psf_tuning = '' 
     #else:
-    #    psf_tuning = ' data'
+    #   psf_tuning = ' data'
     #if len(psf_param) > 3:
-    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
-    #                      beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
-    #                      psf_profile='moffat'+psf_tuning)
-    #    l = psf_param[2]
+    #   psf = create_psf(x=cube.shape[2],y=cube.shape[1],alpha=psf_param[0],
+    #             beta=psf_param[1],length=psf_param[2],angle=psf_param[3],
+    #             psf_profile='moffat'+psf_tuning)
+    #   l = psf_param[2]
     #else:
-    #    psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
-    #                      length=psf_param[1],angle=psf_param[2],
-    #                      psf_profile='gaussian'+psf_tuning)
+    #   psf = create_psf(x=cube.shape[2],y=cube.shape[1],stddev=psf_param[0],
+    #             length=psf_param[1],angle=psf_param[2],
+    #             psf_profile='gaussian'+psf_tuning)
     l = psf.length
     if l < 5:
         r = 1
@@ -657,7 +657,7 @@ def _compare_catalog(model_files,lam,flux):
     model = at.Table.read(model_files[ind], format='ascii')
     if '_a' in name:
         name = name.split('_a')[0]
-    model = S.ArraySpectrum(wave=lam_vac2air(model['wave'].value),
+    model = S.ArraySpectrum(wave=model['wave'].value,#lam_vac2air(model['wave'].value),
                                 flux=model['flux'].value,fluxunits='flam',name=name)
     return model, cors[ind]
 
@@ -686,6 +686,7 @@ def match_spec_to_model(spec,catalog='ck+'):
     flux = savgol_filter(flux,101,1)
     if 'ck' in catalog.lower():
         path = f'{package_directory}data/ck04_stsci/*'
+        #path = f'{package_directory}data/munari05/*'
         model_files = glob(path)
         model, cor = _compare_catalog(model_files,lam,flux)
         
@@ -720,7 +721,7 @@ def match_spec_to_model(spec,catalog='ck+'):
         path = f'{package_directory}data/eso_spec/*'
         model, cor = _compare_catalog(path,lam,flux)
 
-    #redshift, _ = calc_redshift(spec)
+    #redshift,zerr, _ = calc_redshift(spec)
     redshift = 0
     #model = model.redshift(-redshift)
 
@@ -958,7 +959,7 @@ def calc_redshift(spec):
         Hb
         NaD
         Ha
-        CaII psflet (I II III)
+        CaII triplet (I II III)
 
     Parameters
     ----------
@@ -977,9 +978,9 @@ def calc_redshift(spec):
     lines = {'Hb':np.array([4861.323]),
          'NaD':np.array([5889.951, 5895.924]),
          'Ha':np.array([6562.797]),
-         'CaII_I':np.array([8498.020]),
-         'CaII_II':np.array([8542.088]),
-         'CaII_III':np.array([8662.138])
+         'CaII_a':np.array([8498.020]),
+         'CaII_b':np.array([8542.088]),
+         'CaII_c':np.array([8662.138])
             }
     fitted = {}
     for line in lines.keys():
@@ -1016,12 +1017,20 @@ def calc_redshift(spec):
         if np.nansum(finite) > 10:
             g = fit_mod(mod, wave[finite], flux[finite])
             if line == 'NaD':
-                diff = np.mean(np.array([g.mean_1/em[0]-1,g.mean_2/em[1]-1]))
+                diff = np.mean(np.array([g.mean_1.value/em[0]-1,g.mean_2.value/em[1]-1]))
+                error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
+                pos_er = abs(np.nanmean(np.array([error[2] / (g.mean_1.value-em[0]),error[5] / (g.mean_2.value-em[1])])))
+                amp_er = abs(np.nanmean(error[[1,4]]) / np.nanmean([g.amplitude_1.value,g.amplitude_2.value]))
+
             else:
                 diff = g.mean_1 / em[0] - 1
+                error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
+                pos_er = abs(error[2] / (g.mean_1.value-em[0]))
+                amp_er = abs(error[1] / g.amplitude_1.value)
             m = g(wave)
             cor = pearsonr(m[finite],flux[finite]).correlation
-            if (cor > 0.8)& (g.amplitude_1.value < 0):
+
+            if (g.amplitude_1.value < 0) & (amp_er < 0.1) & (pos_er < 0.2):
                 good = True
             else:
                 good = False
@@ -1029,20 +1038,29 @@ def calc_redshift(spec):
             g = None
             cor = 0
             diff = np.nan
-
-
-        fitted[line] = {'fit':g,'wave':wave,'flux':flux,'shift':diff,'cor':cor,'quality':good}
+        fitted[line] = {'fit':g,'wave':wave,'flux':flux,'shift':diff,'cor':cor,'quality':good,'error':abs(pos_er*diff)}
 
     shift = []
+    er = []
     for line in lines.keys():   
         if fitted[line]['quality']:
             shift += [fitted[line]['shift']]
-    shift = np.nanmedian(shift)
+            er += [fitted[line]['error']]
+    er = np.array(er)
+    shift = np.nansum(shift/er**2)/np.nansum(1/er**2)#np.average(shift,weights=abs(1/er))
+    er = np.sqrt(1/np.nansum(1/er**2))
     if np.isnan(shift):
         shift = 0
+        er = 0
+    
+    return shift, er, fitted
 
-    return shift, fitted
 
+def _calc_val(val):
+    val = str(int(np.round(val,0)))
+    if '-' in val:
+        val = r'$-$' + val[1:]
+    return val
 
 def plot_z_shifts(spec):
     """
@@ -1053,11 +1071,13 @@ def plot_z_shifts(spec):
     spec : pysynphot.spectrum.ArraySpectrum
         Input spectrum
     """
+    from astropy.constants import c
+    light = c.to('km/s').value
     fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
-    inches_per_pt = 1.0/72.27            # Convert pt to inches
-    golden_mean = (np.sqrt(5)-1.0)/2.0     # Aesthetic ratio
+    inches_per_pt = 1.0/72.27       # Convert pt to inches
+    golden_mean = (np.sqrt(5)-1.0)/2.0   # Aesthetic ratio
     fig_width = fig_width_pt*inches_per_pt  # width in inches
-    _,fitted = calc_redshift(spec)
+    shift,error,fitted = calc_redshift(spec)
     fig, axs = plt.subplot_mosaic('''
                                    ABC
                                    DEF
@@ -1071,46 +1091,65 @@ def plot_z_shifts(spec):
     axs['A'].plot(fitted['Hb']['wave'],mod,'--',label='Model')
     axs['A'].legend(loc=4)
     axs['A'].set_ylabel('Normalised flux',fontsize=12)
-    axs['A'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['Hb']['shift'],b=fitted['Hb']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['Hb']['shift']*light)
+
+    axs['A'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['Hb']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['A'].set_ylim(np.min(fitted['Hb']['flux'])*.9,np.max(fitted['Hb']['flux'])+.05)
 
     axs['B'].set_title(r'H$\alpha$')
     axs['B'].plot(fitted['Ha']['wave'],fitted['Ha']['flux'])
     mod = fitted['Ha']['fit'](fitted['Ha']['wave'])
     axs['B'].plot(fitted['Ha']['wave'],mod,'--')
-    axs['B'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['Ha']['shift'],b=fitted['Ha']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['Ha']['shift']*light)
+    axs['B'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['Ha']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['B'].set_ylim(np.min(fitted['Ha']['flux'])*.9,np.max(fitted['Ha']['flux'])+.05)
 
     axs['C'].set_title(r'Na D')
     axs['C'].plot(fitted['NaD']['wave'],fitted['NaD']['flux'])
     mod = fitted['NaD']['fit'](fitted['NaD']['wave'])
     axs['C'].plot(fitted['NaD']['wave'],mod,'--')
-    axs['C'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['NaD']['shift'],b=fitted['NaD']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['NaD']['shift']*light)
+    axs['C'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['NaD']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['C'].set_ylim(np.min(fitted['NaD']['flux'])*.9,np.max(fitted['NaD']['flux'])+.05)
 
-    axs['D'].set_title(r'Ca II psflet I')
-    axs['D'].plot(fitted['CaII_I']['wave'],fitted['CaII_I']['flux'])
-    mod = fitted['CaII_I']['fit'](fitted['CaII_I']['wave'])
-    axs['D'].plot(fitted['CaII_I']['wave'],mod,'--')
+    axs['D'].set_title(r'Ca II triplet $a$')
+    axs['D'].plot(fitted['CaII_a']['wave'],fitted['CaII_a']['flux'])
+    mod = fitted['CaII_a']['fit'](fitted['CaII_a']['wave'])
+    axs['D'].plot(fitted['CaII_a']['wave'],mod,'--')
     axs['D'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
     axs['D'].set_ylabel('Normalised flux',fontsize=12)
-    axs['D'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_I']['shift'],b=fitted['CaII_I']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['CaII_a']['shift']*light)
+    axs['D'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['CaII_a']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['D'].set_ylim(np.min(fitted['CaII_a']['flux'])*.9,np.max(fitted['CaII_a']['flux'])+.05)
 
-    axs['E'].set_title(r'Ca II psflet II')
-    axs['E'].plot(fitted['CaII_II']['wave'],fitted['CaII_II']['flux'])
-    mod = fitted['CaII_II']['fit'](fitted['CaII_II']['wave'])
-    axs['E'].plot(fitted['CaII_II']['wave'],mod,'--')
+    axs['E'].set_title(r'Ca II triplet $b$')
+    axs['E'].plot(fitted['CaII_b']['wave'],fitted['CaII_b']['flux'])
+    mod = fitted['CaII_b']['fit'](fitted['CaII_b']['wave'])
+    axs['E'].plot(fitted['CaII_b']['wave'],mod,'--')
     axs['E'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
-    axs['E'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_II']['shift'],b=fitted['CaII_II']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['CaII_b']['shift']*light)
+    axs['E'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['CaII_b']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['E'].set_ylim(np.min(fitted['CaII_b']['flux'])*.9,np.max(fitted['CaII_b']['flux'])+.05)
 
-    axs['F'].set_title(r'Ca II psflet III')
-    axs['F'].plot(fitted['CaII_III']['wave'],fitted['CaII_III']['flux'])
-    mod = fitted['CaII_III']['fit'](fitted['CaII_III']['wave'])
-    axs['F'].plot(fitted['CaII_III']['wave'],mod,'--')
+    axs['F'].set_title(r'Ca II triplet $c$')
+    axs['F'].plot(fitted['CaII_c']['wave'],fitted['CaII_c']['flux'])
+    mod = fitted['CaII_c']['fit'](fitted['CaII_c']['wave'])
+    axs['F'].plot(fitted['CaII_c']['wave'],mod,'--')
     axs['F'].set_xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
-    axs['F'].annotate('z={a:.2e}\ncor={b:.2f}'.format(a=fitted['CaII_III']['shift'],b=fitted['CaII_III']['cor']),(.05,.1), 
-                      xycoords='axes fraction')
+    val = _calc_val(fitted['CaII_c']['shift']*light)
+    axs['F'].annotate(r'$v=$'+val+r'$\pm$'
+                       + str(int(np.round(fitted['CaII_c']['error']*light,0)))+' km/s',
+                      (.02,.04), xycoords='axes fraction',fontsize=14)
+    axs['F'].set_ylim(np.min(fitted['CaII_c']['flux'])*.9,np.max(fitted['CaII_c']['flux'])+.05)
 
     plt.tight_layout()
