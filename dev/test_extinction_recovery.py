@@ -8,7 +8,7 @@ import pysynphot as S
 import astropy.table as at
 from extinction import fitzpatrick99, apply
 from scipy.stats import pearsonr
-from tqdm.notebook import trange, tqdm
+from tqdm import trange, tqdm
 from joblib import Parallel, delayed
 
 def _has_len(obj):
@@ -23,7 +23,7 @@ def _parallel_model_grid(model,e,Rv=3.1):
     return ext
 
 
-def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=8):
+def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=-1):
     extinctions = np.arange(0,max_ext,0.01)
     name = model_file.split('/')[-1].split('.dat')[0]
     model = at.Table.read(model_file, format='ascii')
@@ -42,7 +42,8 @@ def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=8):
         exts = Parallel(n_jobs=num_cores)(delayed(_parallel_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
     return exts
 
-def _parallel_cor(spec,model_fluxes,num_cores=8):
+def _parallel_cor(spec,model_fluxes,num_cores=-1):
+    #flux = savgol_filter(flux,101,1)
     #coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in trange(len(model_fluxes),desc='Correlation'))
     coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in range(len(model_fluxes)))
     coeff = np.array(coeff)
@@ -50,23 +51,27 @@ def _parallel_cor(spec,model_fluxes,num_cores=8):
     coeff[~np.isfinite(coeff)] = 0
     return coeff[:,0]
 
-def __parallel_refactoring(model):
+def _parallel_refactoring(model):
     flux = model.flux
     ext = float(model.name.split('=')[-1])
     return flux, ext
 
-def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=8):
+def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
     if not _has_len(obs_spec):
         obs_spec = [obs_spec]
     if not _has_len(mags):
-        mags = [mags]
-    
-        
+        mags = [mags]    
+    #for i in range(len(obs_spec)):
+    #    flux = obs_spec[i].flux
+    #    flux = savgol_filter(flux,101,1)
+    #    obs_spec[i] = S.ArraySpectrum(wave=obs_spec[i].wave,#lam_vac2air(model['wave'].value),
+    #                                  flux=flux,fluxunits='flam',name=obs_spec[i].name)
+
     model_grid = []
     for i in trange(len(model_files),desc='Model grid'):
         model_grid += [_model_grid(model_files[i],target_lam=obs_spec[0].wave)]
     model_grid = np.array(model_grid).flatten()
-    model_flux, model_ebv = zip(*Parallel(n_jobs=num_cores)(delayed(__parallel_refactoring)(model_grid[i]) for i in trange(len(model_grid),desc='Refactor')))
+    model_flux, model_ebv = zip(*Parallel(n_jobs=num_cores)(delayed(_parallel_refactoring)(model_grid[i]) for i in trange(len(model_grid),desc='Refactor')))
     model_spec = []
     cor = []
     ebv = []
@@ -112,7 +117,9 @@ for i in test_ids:
 
         models += [test]
 
-spec, cor, e = _match_obs_to_model(models,ck_files,np.ones_like(test_ebvs)*10,pbs)
+print('Made the models')
+
+spec, cor, e = _match_obs_to_model(models,ck_files,np.ones_like(ebvs)*10,pbs)
 
 mod_names = []
 spec_names = []
