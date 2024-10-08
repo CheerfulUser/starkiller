@@ -24,7 +24,7 @@ def _parallel_model_grid(model,e,Rv=3.1):
     return ext
 
 
-def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=-1):
+def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=8):
     extinctions = np.arange(0,max_ext,0.01)
     name = model_file.split('/')[-1].split('.dat')[0]
     model = at.Table.read(model_file, format='ascii')
@@ -43,7 +43,7 @@ def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=-1):
         exts = Parallel(n_jobs=num_cores)(delayed(_parallel_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
     return exts
 
-def _parallel_cor(spec,model_fluxes,num_cores=-1):
+def _parallel_cor(spec,model_fluxes,num_cores=8):
     #coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in trange(len(model_fluxes),desc='Correlation'))
     coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in range(len(model_fluxes)))
     coeff = np.array(coeff)
@@ -56,7 +56,7 @@ def __parallel_refactoring(model):
     ext = float(model.name.split('=')[-1])
     return flux, ext
 
-def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
+def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=8):
     if not _has_len(obs_spec):
         obs_spec = [obs_spec]
     if not _has_len(mags):
@@ -93,13 +93,13 @@ test_ebvs = []
 models = []
 for i in test_ids:
     model = at.Table.read(ck_files[i], format='ascii')
-    name = testfile[j].split('/')[-1].split('.dat')[0]
+    name = ck_files[i].split('/')[-1].split('.dat')[0]
 
     if '_a' in name:
             name = name.split('_a')[0]
     model = S.ArraySpectrum(wave=model['wave'].value,#lam_vac2air(model['wave'].value),
                             flux=model['flux'].value,fluxunits='flam',name=name)
-    ebvs = np.random.rand(10) * 4
+    ebvs = np.random.rand(20) * 4
     test_ebvs += [ebvs]
     for e in ebvs:
         test = S.ArraySpectrum(model.wave, 
@@ -112,3 +112,17 @@ for i in test_ids:
                                     flux=test.flux + np.random.rand(len(test.flux))*0.1,fluxunits='flam',name=test.name)#my_norm(test,pbs,10,name=test.name)
 
         models += [test]
+
+spec, cor, e = _match_obs_to_model(models,ck_files,np.ones_like(test_ebvs)*10,pbs)
+
+mod_names = []
+spec_names = []
+for i in range(len(spec)):
+    spec_names += [spec[i].name]
+    mod_names += [models[i].name]
+spec_names = np.array(spec_names)
+mod_names = np.array(mod_names)
+
+result = pd.DataFrame(columns=['Model','Matched','model_ebv','matched_ebv'],data=np.array([mod_names,spec_names,test_ebvs,e]).T)
+
+result.to_csv('extinction_recovery_test.csv',index=False)
