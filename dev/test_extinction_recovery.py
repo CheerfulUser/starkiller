@@ -23,7 +23,7 @@ def _parallel_model_grid(model,e,Rv=3.1):
     return ext
 
 
-def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=-1):
+def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=10):
     extinctions = np.arange(0,max_ext,0.01)
     name = model_file.split('/')[-1].split('.dat')[0]
     model = at.Table.read(model_file, format='ascii')
@@ -42,7 +42,7 @@ def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=-1):
         exts = Parallel(n_jobs=num_cores)(delayed(_parallel_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
     return exts
 
-def _parallel_cor(spec,model_fluxes,num_cores=-1):
+def _parallel_cor(spec,model_fluxes,num_cores=10):
     #flux = savgol_filter(flux,101,1)
     #coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in trange(len(model_fluxes),desc='Correlation'))
     coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in range(len(model_fluxes)))
@@ -56,7 +56,7 @@ def _parallel_refactoring(model):
     ext = float(model.name.split('=')[-1])
     return flux, ext
 
-def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
+def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=10):
     if not _has_len(obs_spec):
         obs_spec = [obs_spec]
     if not _has_len(mags):
