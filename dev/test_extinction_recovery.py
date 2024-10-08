@@ -119,7 +119,7 @@ for i in test_ids:
 
 print('Made the models')
 
-spec, cor, e = _match_obs_to_model(models,ck_files,np.ones_like(ebvs)*10,pbs)
+spec, cor, e = _match_obs_to_model(models,ck_files,np.ones_like(models)*10,pbs)
 
 mod_names = []
 spec_names = []
