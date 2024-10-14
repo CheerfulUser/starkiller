@@ -14,7 +14,7 @@ from joblib import Parallel, delayed
 def _has_len(obj):
     return hasattr(obj, '__len__')
 
-def _parallel_model_grid(model,e,Rv=3.1):
+def _create_model_grid(model,e,Rv=3.1):
     ext = S.ArraySpectrum(model.wave, 
                         apply(fitzpatrick99(model.wave.astype('double'),e*Rv,Rv),
                               model.flux),name=model.name + ' ebv=' + str(e))
@@ -23,8 +23,9 @@ def _parallel_model_grid(model,e,Rv=3.1):
     return ext
 
 
-def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=10):
+def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=1):
     extinctions = np.arange(0,max_ext,0.01)
+    extinctions = np.round(extinctions,3)
     name = model_file.split('/')[-1].split('.dat')[0]
     model = at.Table.read(model_file, format='ascii')
     if '_a' in name:
@@ -36,53 +37,46 @@ def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=10):
                                 flux=downsample_spec(model,target_lam),fluxunits='flam',name=name)
     if num_cores == 1:
         exts = []
-        for i in trange(len(extinctions)):
-            exts += [_parallel_model_grid(model,extinctions[i])]
+        for i in range(len(extinctions)):
+            exts += [_create_model_grid(model,extinctions[i])]
     else:
-        exts = Parallel(n_jobs=num_cores)(delayed(_parallel_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
+        exts = Parallel(n_jobs=num_cores)(delayed(_create_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
     return exts
 
-def _parallel_cor(spec,model_fluxes,num_cores=10):
-    #flux = savgol_filter(flux,101,1)
-    #coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in trange(len(model_fluxes),desc='Correlation'))
-    coeff = Parallel(n_jobs=num_cores)(delayed(pearsonr)(spec.flux,model_fluxes[i]) for i in range(len(model_fluxes)))
-    coeff = np.array(coeff)
+def _calc_cor(spec,model_fluxes,num_cores=-1):
+    coeff = np.array([pearsonr(spec.flux,m)[0] for m in model_fluxes])
     coeff[coeff<0] = 0
     coeff[~np.isfinite(coeff)] = 0
-    return coeff[:,0]
+    return coeff#[:,0]
 
-def _parallel_refactoring(model):
+def _refactoring(model):
     flux = model.flux
     ext = float(model.name.split('=')[-1])
     return flux, ext
 
-def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=10):
+
+def _parallel_match(spec,model_flux):
+    cors = _calc_cor(spec,model_flux)
+    ind = np.argmax(cors)
+    cor = cors[ind]
+    return cor, ind 
+
+def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
     if not _has_len(obs_spec):
         obs_spec = [obs_spec]
     if not _has_len(mags):
-        mags = [mags]    
-    #for i in range(len(obs_spec)):
-    #    flux = obs_spec[i].flux
-    #    flux = savgol_filter(flux,101,1)
-    #    obs_spec[i] = S.ArraySpectrum(wave=obs_spec[i].wave,#lam_vac2air(model['wave'].value),
-    #                                  flux=flux,fluxunits='flam',name=obs_spec[i].name)
+        mags = [mags]
 
-    model_grid = []
-    for i in trange(len(model_files),desc='Model grid'):
-        model_grid += [_model_grid(model_files[i],target_lam=obs_spec[0].wave)]
+    model_grid = Parallel(n_jobs=num_cores)(delayed(_model_grid)(model_files[i],target_lam=obs_spec[0].wave) for i in range(len(model_files)))
     model_grid = np.array(model_grid).flatten()
-    model_flux, model_ebv = zip(*Parallel(n_jobs=num_cores)(delayed(_parallel_refactoring)(model_grid[i]) for i in trange(len(model_grid),desc='Refactor')))
-    model_spec = []
-    cor = []
-    ebv = []
-    for i in range(len(obs_spec)):
-        spec = obs_spec[i]
-        cors = _parallel_cor(spec,model_flux)
-        ind = np.argmax(cors)
-        cor += [cors[ind]]
-        model = my_norm(model_grid[ind],pbs,mags[i],name=model_grid[ind].name)
-        model_spec += [model]
-        ebv += [model_ebv[ind]]
+    model_flux, model_ebv = zip(*[_refactoring(m) for m in model_grid])
+    model_flux = np.array(model_flux); model_ebv = np.array(model_ebv)
+    cor, ind = zip(*Parallel(n_jobs=num_cores)(delayed(_parallel_match)(spec, model_flux) for spec in obs_spec))
+    cor = np.array(cor); ind = np.array(ind)
+    model_spec = model_grid[ind]
+    ebv = model_ebv[ind]
+    for i in range(len(model_spec)):
+        model_spec[i] = my_norm(model_spec[i],pbs,mags[i],name=model_spec[i].name)
     return model_spec, cor, ebv
 
 
@@ -104,7 +98,6 @@ for i in test_ids:
     model = S.ArraySpectrum(wave=model['wave'].value,#lam_vac2air(model['wave'].value),
                             flux=model['flux'].value,fluxunits='flam',name=name)
     ebvs = np.random.rand(20) * 4
-    test_ebvs += [ebvs]
     for e in ebvs:
         test = S.ArraySpectrum(model.wave, 
                                 apply(fitzpatrick99(model.wave.astype('double'),e*Rv,Rv),
@@ -116,6 +109,7 @@ for i in test_ids:
                                     flux=test.flux + np.random.rand(len(test.flux))*0.1,fluxunits='flam',name=test.name)#my_norm(test,pbs,10,name=test.name)
 
         models += [test]
+        test_ebvs += [e]
 
 print('Made the models')
 
