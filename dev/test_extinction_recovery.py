@@ -84,11 +84,12 @@ ck_files = glob('../starkiller/data/ck04_stsci/*')
 svo_bp = 'GAIA/GAIA0.G'
 pbs = load_pbs(svo_bp,0,'AB',SVO=True)
 testfile = glob('../starkiller/data/marcs-t02/*')
-
 test_ids = np.arange(len(ck_files))[::4]
 Rv = 3.1
 test_ebvs = []
+test_noise = []
 models = []
+noise = np.arange(0,1,0.1)
 for i in test_ids:
     model = at.Table.read(ck_files[i], format='ascii')
     name = ck_files[i].split('/')[-1].split('.dat')[0]
@@ -99,17 +100,19 @@ for i in test_ids:
                             flux=model['flux'].value,fluxunits='flam',name=name)
     ebvs = np.random.rand(20) * 4
     for e in ebvs:
-        test = S.ArraySpectrum(model.wave, 
-                                apply(fitzpatrick99(model.wave.astype('double'),e*Rv,Rv),
-                                      model.flux),name=model.name + ' ebv=' + str(np.round(e,3)))
-        test = my_norm(test,pbs,10,name=test.name)
-        test = S.ArraySpectrum(wave=test.wave,#lam_vac2air(model['wave'].value),
-                                    flux=test.flux/np.nanmedian(test.flux),fluxunits='flam',name=test.name)#my_norm(test,pbs,10,name=test.name)
-        test = S.ArraySpectrum(wave=test.wave,#lam_vac2air(model['wave'].value),
-                                    flux=test.flux + np.random.rand(len(test.flux))*0.1,fluxunits='flam',name=test.name)#my_norm(test,pbs,10,name=test.name)
+        for n in noise:
+            test = S.ArraySpectrum(model.wave, 
+                                    apply(fitzpatrick99(model.wave.astype('double'),e*Rv,Rv),
+                                          model.flux),name=model.name + ' ebv=' + str(np.round(e,3)))
+            test = my_norm(test,pbs,10,name=test.name)
+            test = S.ArraySpectrum(wave=test.wave,#lam_vac2air(model['wave'].value),
+                                        flux=test.flux/np.nanmedian(test.flux),fluxunits='flam',name=test.name)#my_norm(test,pbs,10,name=test.name)
+            test = S.ArraySpectrum(wave=test.wave,#lam_vac2air(model['wave'].value),
+                                        flux=test.flux + np.random.rand(len(test.flux))*n,fluxunits='flam',name=test.name +f' noise={np.round(n,1)}')
 
-        models += [test]
-        test_ebvs += [e]
+            models += [test]
+            test_ebvs += [e]
+            test_noise += [n]
 
 print('Made the models')
 
@@ -123,6 +126,6 @@ for i in range(len(spec)):
 spec_names = np.array(spec_names)
 mod_names = np.array(mod_names)
 
-result = pd.DataFrame(columns=['Model','Matched','model_ebv','matched_ebv'],data=np.array([mod_names,spec_names,test_ebvs,e]).T)
+result = pd.DataFrame(columns=['Model','Matched','model_ebv','matched_ebv','noise'],data=np.array([mod_names,spec_names,test_ebvs,e,test_noise]).T)
 
 result.to_csv('extinction_recovery_test.csv',index=False)
