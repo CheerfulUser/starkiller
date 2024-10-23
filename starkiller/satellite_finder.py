@@ -11,14 +11,17 @@ import pandas as pd
 
 
 class sat_killer():
-    def __init__(self,cube,psf,wavelength=None,sat_thickness=17,sat_sigma=15,y_close=5,angle_close=2,num_cores=5,run=True):
+    def __init__(self,cube,psf,wavelength=None,sat_thickness=17,sat_sigma=10,
+                 savename=None,y_close=5,angle_close=2,dist_close=10,num_cores=5,run=True):
         self.cube = cube
         self.star_psf = psf
         self.thickness = sat_thickness
-        self.y_close = y_close
-        self.angle_close = angle_close
+        self.savename = savename
+        #self.y_close = y_close
+        #self.angle_close = angle_close
         self.num_cores = num_cores
         self.wavelength = wavelength
+        self.streak_coef = []
 
         if run:
             self._make_image()
@@ -26,13 +29,13 @@ class sat_killer():
             self._dilate()
             self._edges()
             self._lines()
-            self._match_lines()
-            self._find_center()
-            self.make_mask()
-            self._detected()
-            if self.sat_num > 0:
-                self.make_satellite_psf()
-                self._fit_spec()
+            self.__detection_funcs(sat_sigma)
+            if len(self.streak_coef) > 0:
+                self.make_mask()
+                self._detected()
+                if self.sat_num > 0:
+                    self.make_satellite_psf()
+                    self._fit_spec()
 
     def _make_image(self):
         image = np.nanmedian(self.cube,axis=0)
@@ -92,77 +95,159 @@ class sat_killer():
             good = np.array(good,dtype=int)
 
             self.lines = lines[good]
+            coefs = []
+            for line in self.lines:
+                x1, y1, x2, y2 = line[0]
+                coefs += [np.polyfit([x1,x2], [y1,y2], 1)]
+
+            self.streak_coef = np.array(coefs)
         else:
             self.lines = []
     
-    
-
-    def _match_lines(self,y_close=None,angle_close=None):
-        if y_close is None:
-            y_close = self.y_close
-        if angle_close is None:
-            angle_close = self.angle_close
-            
-        coefs = []
-        xs = []
-        ys = []
-        for line in self.lines:
-            x1, y1, x2, y2 = line[0]
-            xs += [[x1,x2]]
-            ys += [[y1,y2]]
-            coefs += [np.polyfit([x1,x2], [y1,y2], 1)]
-        coefs = np.array(coefs)
-        xs = np.array(xs); ys = np.array(ys)
-        xx = np.arange(np.min(xs),np.max(xs),1)
+    def _match_lines(self,close=30,minlines=1):
+        x = np.arange(0,self.image.shape[1],0.5)
         yy = []
-        for c in coefs:
-            yy += [xx*c[0]+c[1]]
+        for c in self.streak_coef:
+            yy += [x*c[0]+c[1]]
         yy = np.array(yy)
 
-
-        new_coefs = []
-
-        used = np.zeros(len(yy))
-        for i in range(len(yy)):
-            if not used[i]:
-                diff = abs(yy[np.newaxis,i] - yy)
-                diff = np.nanmedian(diff,axis=1)
-                ind = diff < y_close
-                new_coefs += [np.nanmean(coefs[ind],axis=0)]
-                used[ind] = 1
-
-        new_coefs = np.array(new_coefs)
-        yy = []
-        for c in new_coefs:
-            yy += [xx*c[0]+c[1]]
-        yy = np.array(yy)
-        n_coefs = []
-
-        used = np.zeros(len(yy))
-        angle = np.arctan(new_coefs[:,0])
-        for i in range(len(yy)):
-            if not used[i]:
-                diff = abs(angle[i] - angle)
-                ind = diff < angle_close
-                n_coefs += [np.nanmean(new_coefs[ind],axis=0)]
-                used[ind] = 1
-        n_coefs = np.array(n_coefs)
-
-        self.streak_coef = n_coefs
+        xx = np.zeros_like(yy)
+        xx[:] = x
         
-        self._find_center()
+        
+        ind = (yy<0) | (yy > self.image.shape[0])
+        yy[ind] = np.nan
+        
+        d = np.sqrt((yy[:,np.newaxis,:,np.newaxis] - yy[np.newaxis,:,np.newaxis,:])**2 
+                    + (xx[:,np.newaxis,:,np.newaxis] - xx[np.newaxis,:,np.newaxis,:])**2)
+        d[d==0] = np.nan
+
+        dmatrix = np.nanmean(np.nanmin(d,axis=2),axis=2)
+        np.fill_diagonal(dmatrix,0)
+        d_bool = dmatrix < close
+        d_bool = np.unique(d_bool,axis=0)
+        ind = np.sum(d_bool,axis=1) > minlines
+        d_bool = d_bool[ind]
+
+        n_coefs =[]
+        for i in d_bool:
+            n_coefs += [np.nanmean(self.streak_coef[i],axis=0)]
+        n_coefs = np.array(n_coefs)
+        self.streak_coef = n_coefs
+        if len(n_coefs) > 0:
+            self._find_center()
+
+    def __match_lines(self,y_close=None,angle_close=None,dist_close=None):
+        if len(self.lines ) > 1:
+            if y_close is None:
+                y_close = self.y_close
+            if angle_close is None:
+                angle_close = self.angle_close
+            if dist_close is None:
+                dist_close = self.dist_close
+                
+            coefs = []
+            xs = []
+            ys = []
+            for line in self.lines:
+                x1, y1, x2, y2 = line[0]
+                xs += [[x1,x2]]
+                ys += [[y1,y2]]
+                coefs += [np.polyfit([x1,x2], [y1,y2], 1)]
+            coefs = np.array(coefs)
+            xs = np.array(xs); ys = np.array(ys)
+            xx = np.arange(np.min(xs),np.max(xs),1)
+            yy = []
+            for c in coefs:
+                yy += [xx*c[0]+c[1]]
+            yy = np.array(yy)
+
+
+            new_coefs = []
+
+            used = np.zeros(len(yy))
+            for i in range(len(yy)):
+                if not used[i]:
+                    diff = abs(yy[np.newaxis,i] - yy)
+                    diff = np.nanmedian(diff,axis=1)
+                    ind = diff < y_close
+                    new_coefs += [np.nanmean(coefs[ind],axis=0)]
+                    used[ind] = 1
+
+            new_coefs = np.array(new_coefs)
+            yy = []
+            for c in new_coefs:
+                yy += [xx*c[0]+c[1]]
+            yy = np.array(yy)
+            n_coefs = []
+            distdiff = np.sqrt(((new_coefs[1][np.newaxis,:] * new_coefs[0][np.newaxis,:] - new_coefs[1][:,np.newaxis] * new_coefs[0][:,np.newaxis])/(new_coefs[0][:,np.newaxis]*new_coefs[0][np.newaxis,0]+1)))
+            used = np.zeros(len(yy))
+            angle = np.arctan(new_coefs[:,0])
+            for i in range(len(yy)):
+                if not used[i]:
+                    diff = abs(angle[i] - angle)
+                    distdiff = np.sqrt((yy[i]-yy)**2 + (xx,))
+                    ind = (diff < angle_close) & (ydiff < dist_close)
+                    n_coefs += [np.nanmean(new_coefs[ind],axis=0)]
+                    used[ind] = 1
+            n_coefs = np.array(n_coefs)
+
+            self.streak_coef = n_coefs
+            
+            self._find_center()
+
+    def __lc_variation_test(self,variation_frac=0.2):
+        good = []
+        for c in self.streak_coef:
+            xx = np.arange(0,self.image.shape[1],1)
+            yy = xx*c[0] + c[1]
+            yy = (yy+0.5).astype(int)
+            ind = (yy > 0) & (yy < self.image.shape[0])
+            lc = self.image[yy[ind],xx[ind]]
+            mean, med, std = sigma_clipped_stats(lc)
+            if std == 0:
+                std = 1
+            if std > 30:
+                std = 30
+            var = abs(lc - med)
+            frac = np.sum(var >= 3*std) / len(lc)
+            if frac < variation_frac:
+                good += [True]
+            else:
+                good += [False]
+        self.streak_coef = self.streak_coef[good]
+
+    def __lc_stars_vetting(self,sigma=2):
+        good = []
+        for c in self.streak_coef:
+            xx = np.arange(0,self.image.shape[1],1)
+            yy = xx*c[0] + c[1]
+            yy = (yy+0.5).astype(int)
+            ind = (yy > 0) & (yy < self.image.shape[0])
+            lc = self.image[yy[ind],xx[ind]]
+            
+            mean, med, std = sigma_clipped_stats(lc)
+            pmean, pmed, pstd = sigma_clipped_stats(self.image,maxiters=20)
+            cond = med > pmed + sigma*pstd
+            if cond:
+                good += [True]
+            else:
+                good += [False]
+        self.streak_coef = self.streak_coef[good]
+        
+
 
     def plot_lines(self):
         plt.figure()
         plt.imshow(self.image,origin='lower',cmap='gray',vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,95))
         #for line in self.lines:
-        #    x1, y1, x2, y2 = line[0]
-        #    plt.plot([x1,x2],[y1,y2],'C1')
+        #   x1, y1, x2, y2 = line[0]
+        #   plt.plot([x1,x2],[y1,y2],'C1')
         counter = 1
         for c in self.streak_coef:
             xx = np.arange(0,self.image.shape[1],0.5)
             yy = xx*c[0] + c[1]
-            plt.plot(xx,yy,'C1',label=f'Sat {counter}')
+            plt.plot(xx,yy,f'C{counter}--',label=f'Sat {counter}')
             counter += 1
         plt.legend()
         plt.ylim(-0.5,self.image.shape[1]+0.5)
@@ -295,6 +380,34 @@ class sat_killer():
 
         if plot:
             self.plot_spatial_specs()
+
+    def __detection_funcs(self,threshold):
+        self._set_threshold(threshold)
+        self._dilate()
+        self._edges()
+        self._lines()
+        if len(self.lines) > 1:
+            self._match_lines(close=5,minlines=0)
+            self._match_lines(close=60,minlines=1)
+            self.__lc_variation_test()
+            self.__lc_stars_vetting()
+            if len(self.streak_coef) > 0:
+                self.make_mask()
+                self.plot_lines()
+                if self.savename is not None:
+                    plt.savefig(self.savename)
+        self._detected()
+
+
+
+    def quick_detection(self,image,threshold=3,savename=None):
+        self.image = image
+        self.savename = savename
+        self.__detection_funcs(threshold)
+        if (threshold < 10) & (self.sat_num == 0):
+            self.__detection_funcs(10)
+
+        
 
 
     def plot_spatial_specs(self):

@@ -484,7 +484,7 @@ class create_psf():
         residual : float
             Residual of the minimizer.
         """ 
-        res = np.nansum(abs(image - self.longpsf*coeff[0]))
+        res = np.nansum(abs(image - (self.longpsf*coeff[0] + coeff[1])))
         return res
 
     def psf_flux(self,image,output = True):
@@ -509,7 +509,8 @@ class create_psf():
         mask[self.longpsf > np.nanpercentile(self.longpsf,70)] = 1 # type: ignore
         f0 = np.nansum(image*mask)
         bkg = np.nanmedian(image[~mask.astype(bool)])
-        image = image - bkg
+        f0 = np.append(f0,bkg)
+        #image = image - bkg
         if 'data' in self.psf_profile:
             if self.data_psf is not None:
                 self.longpsf = shift(self.data_psf,[self.source_y,self.source_x],mode='nearest')

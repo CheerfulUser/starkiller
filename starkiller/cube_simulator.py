@@ -12,7 +12,7 @@ def downSample2d(arr,sf):
 
 class cube_simulator():
     """
-    Simulates a spectral datacube from an inout catalogue and PSF. The cube is made at higher resolution then downsampled.
+    Simulates a spectral datacube from an inout catalog and PSF. The cube is made at higher resolution then downsampled.
     
     Atributes
     ---------
@@ -27,7 +27,7 @@ class cube_simulator():
     psf : psf class
         The PSF class containing the PSF fit to the data cube
     cat : pd.dataframe
-        The catalogue containing the positions of all sources to simulate
+        The catalog containing the positions of all sources to simulate
     repFact : int
         Replication factor controls the supersampling and downsampling
     padding : int
@@ -48,7 +48,7 @@ class cube_simulator():
 
 
     """
-    def __init__(self,cube,psf=None,catalogue=None,repFact=10,padding=20,datapsf=False,satellite=None):
+    def __init__(self,cube,psf=None,catalog=None,repFact=10,padding=20,datapsf=False,satellite=None):
         """
         Parameters
         ----------
@@ -56,8 +56,8 @@ class cube_simulator():
             Datacube to simulate, this is used for dimensions only.
         psf : psf class
             PSF class containing the PSF fit to the data cube. This is used to insert objects into the simulated cube.
-        catalogue : pd.dataframe
-            Dataframe containing the catalogue positions of all sources to simulate.
+        catalog : pd.dataframe
+            Dataframe containing the catalog positions of all sources to simulate.
         repFact : int
             Replication factor controls the supersampling and downsampling.
         datapsf : bool
@@ -69,7 +69,7 @@ class cube_simulator():
         self.sim = np.zeros_like(cube)
         self.weights = np.zeros_like(cube)
         self.psf = psf
-        self.cat = catalogue
+        self.cat = catalog
         self.repFact = repFact
         self.padding = padding
         self.satellite = satellite
@@ -89,12 +89,12 @@ class cube_simulator():
         """
         return np.nanmedian(self.cube,axis=0)
     
-    def _cat_fluxes(self,catalogue=None):
+    def _cat_fluxes(self,catalog=None):
         """
-        Calculates the fluxes of the catalogue sources, assuming a zeropoint of 25.
+        Calculates the fluxes of the catalog sources, assuming a zeropoint of 25.
         """
-        if catalogue is not None:
-            self.cat = catalogue
+        if catalog is not None:
+            self.cat = catalog
         counts = 10**(2/5*(self.cat['Gmag'].values + 25)) #* 1e20 # cgs zp, and MUSE offset
         self.cat['counts'] = counts
     
@@ -154,7 +154,7 @@ class cube_simulator():
         
     def mag_image(self):
         """
-        Creates an image scaled by the catalogue flux values
+        Creates an image scaled by the catalog flux values
         """
         self._cat_fluxes()
         image = np.zeros_like(self.seeds[0])

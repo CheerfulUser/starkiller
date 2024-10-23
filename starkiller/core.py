@@ -38,6 +38,7 @@ from joblib import Parallel, delayed
 from scipy import signal
 
 from .helpers import *
+from .helpers import _has_len
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
 from .satellite_finder import sat_killer
@@ -54,9 +55,9 @@ class starkiller():
 
 	"""
 	def __init__(self,file,trail=True,model_maglim=25,cal_maglim=18,savepath=None,
-				 catalog=None,spec_catalog='ck',key_filter=None,ref_filter=None,
-				 psf_profile='gaussian',wcs_correction=True,psf_preference='data',
-				 plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
+				 catalog=None,get_catalog='gaia',spec_catalog='ck',key_filter=None,ref_filter=None,
+				 psf_profile='gaussian',wcs_correction=True,psf_align=True,
+				 psf_preference='data',plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
 				 show_specs=False,fuzzy=False,satellite=False,force_flux_correction=False):
 		"""
@@ -75,13 +76,15 @@ class starkiller():
 		savepath : str
 			Path to save the reduction to. If None, the current working directory is used.
 		catalog : pandas DataFrame
-			Catalogue of sources to use. If None, then Gaia DR3 is used.
+			Catalog of sources to use. If None, then the catalog specified in get_catalog is used.
+		get_catalog : str
+			Online catalog to download for the reduction. This can be either Gaia, or Skymapper
 		spec_catalog : str
-			Spectral catalogue to use, options are 'ck' or 'pickles', default is 'ck'.
+			Spectral catalog to use, options are 'ck' or 'pickles', default is 'ck'.
 		key_filter : str
-			Filter to use for the catalogue, if None then the first filter in the catalogue is used.
+			Filter to use for the catalog, if None then the first filter in the catalog is used.
 		ref_filter : str
-			Filter to use as the reference filter, if None then the first filter in the catalogue is used.
+			Filter to use as the reference filter, if None then the first filter in the catalog is used.
 		psf_profile : str
 			Profile to use for the PSF, options are 'gaussian' or 'moffat', default is 'gaussian'.
 		wcs_correction : boolean
@@ -136,10 +139,15 @@ class starkiller():
 		self._fuzzy_field = fuzzy
 		self._force_flux_correction = force_flux_correction
 		self._search_satellite = satellite
+		self._psf_align = psf_align
 
 		if (key_filter is None) & (catalog is None):
-			self.key_filter = 'G'
-			self.ref_filter = 'G_mag'
+			if get_catalog.lower() == 'gaia':
+				self.key_filter = 'G'
+				self.ref_filter = 'G_mag'
+			elif get_catalog.lower() == 'skymapper':
+				self.key_filter = 'i'
+				self.ref_filter = 'i_mag'
 		else:
 			self.key_filter = key_filter + '_mag'
 		
@@ -196,18 +204,21 @@ class starkiller():
 		self.bright_mask = self.image > np.nanpercentile(self.image,90)
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
 
-	def _get_cat(self):
+	def _get_cat(self,catalog='gaia'):
 		"""
-		Load a catalogue, if none is specified then Gaia DR3 is used.
+		Load a catalog, if none is specified then Gaia DR3 is used.
 		"""
 		if self.cat is None:
 			origin = np.array(self.wcs.all_pix2world(0,0,0,0))[:2]
 			corner = np.array(self.wcs.all_pix2world(self.image.shape[1],self.image.shape[0],0,0))[:2]
 			radius = np.sqrt((origin[0] - corner[0])**2 + (origin[1] - corner[1])**2) / 2 
 			size = Angle(radius * 1.2, "deg")
-			self.cat = get_gaia_region([self.ra],[self.dec],size=size.arcsec)
-			self.cat = self.cat.sort_values('G_mag')
-			ind = self.cat.G_mag.values < self.model_maglim
+			if catalog.lower() == 'gaia':
+				self.cat = get_gaia_region([self.ra],[self.dec],size=size.arcsec)
+				self.cat = self.cat.sort_values('G_mag')
+				ind = self.cat.G_mag.values < self.model_maglim
+			elif catalog.lower() == 'skymapper':
+				self.cat = _get_skymapper(self.ra,self.dec,size.deg.value,magnitude_lim=self.model_maglim)
 			if self.verbose:
 				print(f'Number of sources brighter than {self.model_maglim}: {sum(ind)}')
 			#if np.sum(ind) < 2:
@@ -227,12 +238,12 @@ class starkiller():
 		
 	def _sort_cat_filts_mags(self,cat=None):
 		"""
-		Sort the catalogue into filters and magnitudes.
+		Sort the catalog into filters and magnitudes.
 
 		Parameters:
 		-----------
 		cat : pandas DataFrame
-			Catalogue to sort, if None then self.cat is used.
+			Catalog to sort, if None then self.cat is used.
 		"""
 		if cat is None:
 			cat = self.cat 
@@ -253,7 +264,7 @@ class starkiller():
 		mags = cat[mags].values
 		#if cat is None:
 		self.filts = filts
-		self.mags = mags
+		self.mags = mags.flatten()
 		#else:
 		#	return filts, mags
 
@@ -321,7 +332,7 @@ class starkiller():
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'C1.')
 
 	
-	def _find_sources_cluster(self):
+	def _find_sources_cluster(self,trail):
 		"""
 		Find sources in the image using the cluster algorithm. 
 		"""
@@ -360,6 +371,9 @@ class starkiller():
 		ind = ((mx < self.image.shape[1] - np.max(dx)/2) & (mx > np.max(dx)/2) &
 				(my < self.image.shape[0] - np.max(dy)/2) & (my > np.max(dy)/2))
 		mx = mx[ind]; my = my[ind]; dx = dx[ind]; dy = dy[ind]; sign = sign[ind]
+		if self.fuzzy_mask is not None:
+			ind = self.fuzzy_mask[my,mx] == 0
+			mx = mx[ind]; my = my[ind]
 		if len(mx) < 2:
 			print(f'!!! Only {len(mx)} sources identified, coordinates will not fit!!!')
 		self._dao_s = {'xcentroid':mx,'ycentroid':my}
@@ -384,6 +398,9 @@ class starkiller():
 		if np.mean(sign) < 0:
 			self.angle *= -1
 		self.trail = np.nanmedian(np.sqrt(dy**2+dx**2))
+		if not trail:
+			self.trail = 1
+			self.angle = 0
 
 
 	def _find_fuzzy_mask(self,size_lim=0.4):
@@ -441,7 +458,7 @@ class starkiller():
 
 	def _cat_fitter(self,ind):
 		"""
-		Fit the catalogue to the sources in the image.
+		Fit the catalog to the sources in the image.
 
 		Parameters:
 		-----------
@@ -479,16 +496,16 @@ class starkiller():
 
 	def _match_by_shift(self):
 		"""
-		Match the catalogue to the sources in the image by shifting the catalogue.
+		Match the catalog to the sources in the image by shifting the catalog.
 		"""
-		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
-		sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
-		x0 = [0,0,0]
-		bounds = [[-10,10],[-10,10],[0,np.pi/2]]
-		res = minimize(minimize_dist,x0,args=(x,y,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
-		if self.verbose:
-			print('WCS shift: ',res.x)
-		self.wcs_shift = res.x
+		#x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
+		#sourcex = self._dao_s['xcentroid']; sourcey = self._dao_s['ycentroid']
+		#x0 = [0,0,0]
+		#bounds = [[-10,10],[-10,10],[0,np.pi/2]]
+		#res = minimize(minimize_dist,x0,args=(x,y,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
+		#if self.verbose:
+		#	print('WCS shift: ',res.x)
+		#self.wcs_shift = res.x
 		labeled, nr_objects = label(self.bright_mask > 0) 
 		obj_size = []
 		for i in range(nr_objects):
@@ -512,11 +529,14 @@ class starkiller():
 			cims[i] = shift(cims[i],[sy,sx])
 		im = (np.nansum(ims,axis=0) > 0) * 1.
 		im[im==0] = np.nan
+		if self.fuzzy_mask is not None:
+			im[self.fuzzy_mask==1] = np.nan
 		s = (np.nanmedian(cims,axis=0) > 0.5) * 1.
 		ty,tx = np.where(s > 0)
 		s = s[min(ty)-3:max(ty)+4,min(tx)-3:max(tx)+4]
 		
-		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values,self.cat.dec.values,0,0)
+		cat_ind = self.cal_maglim > self.cat[self.ref_filter].values
+		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[cat_ind],self.cat.dec.values[cat_ind],0,0)
 		# brute force it
 		X,Y = np.meshgrid(np.arange(-100,100,10),np.arange(-100,100,10))
 		positions = np.vstack([X.ravel(), Y.ravel(),X.ravel()*0]).T
@@ -539,14 +559,14 @@ class starkiller():
 
 	def _fit_DAO_to_cat(self,maxiter=5,method='shift'):
 		"""
-		Match the catalogue to the sources in the image.
+		Match the catalog to the sources in the image.
 
 		Parameters:
 		-----------
 		maxiter : int
 			Maximum number of iterations.
 		method : str
-			Method to use when matching the catalogue to the sources. Can be 'shift' or 'dist'.
+			Method to use when matching the catalog to the sources. Can be 'shift' or 'dist'.
 		"""
 		if method.lower() == 'dist':
 			safety = 0
@@ -580,7 +600,7 @@ class starkiller():
 
 	def _transform_coords(self,plot=False):
 		"""
-		Transform the coordinates of the catalogue to match the image.
+		Transform the coordinates of the catalog to match the image.
 
 		Parameters:
 		-----------
@@ -596,7 +616,10 @@ class starkiller():
 		ys, xs = np.where(np.isfinite(self.image))
 		d = np.sqrt((xx[:,np.newaxis] - xs[np.newaxis,:])**2 + (yy[:,np.newaxis] - ys[np.newaxis,:])**2)
 		md = np.nanmin(d,axis=1)
-		ind = md < (self.trail / 2)
+		if self.trail > 1:
+			ind = md < (self.trail / 2)
+		else:
+			ind = md < (20 / 2)
 
 		self.cat['x'] = xx
 		self.cat['y'] = yy
@@ -606,7 +629,7 @@ class starkiller():
 		
 		if plot:
 			plt.figure()
-			plt.title('Matching cube sources with catalogue')
+			plt.title('Matching cube sources with catalog')
 			plt.imshow(self.image,vmin=np.nanpercentile(self.image,16),vmax=np.nanpercentile(self.image,85),cmap='gray',origin='lower')
 			plt.plot(self._dao_s['xcentroid'],self._dao_s['ycentroid'],'o',ms=7,label='DAO')
 			plt.plot(self.cat['x'],self.cat['y'],'C1*',label='Catalog')
@@ -806,7 +829,7 @@ class starkiller():
 			raise ValueError(m)
 		self.good_cals = good & ind
 
-	def make_psf(self,fine_shift=True,data_containment_lim=0.95):
+	def make_psf(self,fine_shift=None,data_containment_lim=0.95):
 		"""
 		Make the psf for the image. Adds in the psf and psf_param variables.
 
@@ -817,6 +840,8 @@ class starkiller():
 		data_containment_lim : float
 			Containment limit of the data psf measured as percentage of total PSF flux.
 		"""
+		if fine_shift is None:
+			fine_shift = self._psf_align
 		self._isolate_cals()
 		good = self.good_cals
 		ct = self.cal_cuts#[good]
@@ -892,7 +917,7 @@ class starkiller():
 
 	def _fine_psf_shift(self,shifts,plot=None):
 		"""
-		Perform a fine shift to the catalogue positions based on the psf shifts.
+		Perform a fine shift to the catalog positions based on the psf shifts.
 
 		Parameters:
 		-----------
@@ -1036,7 +1061,7 @@ class starkiller():
 			data = True
 		else:
 			data = False
-		sim = cube_simulator(self.cube,self.psf,catalogue=self.cat,datapsf=data)
+		sim = cube_simulator(self.cube,self.psf,catalog=self.cat,datapsf=data)
 		psf_mask = (sim.all_psfs < np.nanpercentile(sim.all_psfs,70)) * 1.
 		psf_mask[psf_mask ==0] = np.nan
 		m = (self.cube < np.nanpercentile(psf_mask * self.cube,99,axis=(1,2))[:,np.newaxis,np.newaxis]) * 1.
@@ -1129,10 +1154,9 @@ class starkiller():
 				plt.savefig(f'{self.savepath}flux_correction.png',dpi=300)
 
 
-			self._rerun_model_fit()
+			#self._rerun_model_fit()
 		else:
 			self.flux_corr = np.ones_like(self.lam)
-			self.plot_specs(show=self._show_specs)
 			
 
 	def _rerun_model_fit(self):
@@ -1181,25 +1205,31 @@ class starkiller():
 		"""
 		Plot the spectra of the sources in the cube.
 		"""
-		if ~show:
-			plt.ion()
+		#if not show:
+		#	plt.ioff()
 		specs = self.specs
 		model = self.models
 
 		for i in range(len(specs)):
 			fig = plt.figure()
 			plt.title(f'{specs[i].name} cor = {np.round(self.cors[i],2)}')
+			m = sigma_clip(specs[i].flux,sigma=10).mask
+			masked = specs[i].flux[~m]
+			ymarg = (np.max(masked)-np.min(masked)) * 0.05
 			plt.plot(specs[i].wave,specs[i].flux * 1e16,label='IFU')
 			plt.plot(specs[i].wave,model[i].sample(specs[i].wave)/self.flux_corr * 1e16,'--',label= model[i].name,alpha=0.5)
 			
 			plt.xlim(min(specs[i].wave)*0.9,max(specs[i].wave)*1.1)
+			#plt.ylim(np.min(masked)-ymarg,np.max(masked)+ymarg)
 			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
 			plt.xlabel(r'Wavelength ($\rm \AA$)')
 			plt.legend(loc='upper left')
 			plt.savefig(f'{self.savepath}spec_figs/{self.cat.id.iloc[i]}.png',dpi=300)
-			plt.close(fig)
-		if ~show:
-			plt.ion()
+			if not show:
+				plt.close(fig)
+		
+		#if  not show:
+		#	plt.ion()
 
 
 	def _check_satellites(self):
@@ -1241,9 +1271,9 @@ class starkiller():
 		else:
 			data = False
 		if self._search_satellite:
-			scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data,satellite=self.satellite)
+			scene = cube_simulator(self.cube,psf=self.psf,catalog=self.cat,datapsf=data,satellite=self.satellite)
 		else:
-			scene = cube_simulator(self.cube,psf=self.psf,catalogue=self.cat,datapsf=data)
+			scene = cube_simulator(self.cube,psf=self.psf,catalog=self.cat,datapsf=data)
 		flux = []
 		for i in range(len(self.cat)):
 			#f = downsample_spec(self.models[i],self.lam)
@@ -1419,7 +1449,7 @@ class starkiller():
 			#self._find_sources_DAO()
 			self._find_fuzzy_mask()
 			if self._wcs_correction:
-				self._find_sources_cluster()
+				self._find_sources_cluster(trail)
 				self._fit_DAO_to_cat()
 			else:
 				self._fill_params()	
@@ -1435,7 +1465,7 @@ class starkiller():
 				if self.verbose:
 					print('Rerunning cal with psf sources')
 				#self._psf_isolation()
-				self.make_psf(fine_shift=True)
+				self.make_psf()#fine_shift=True)
 				#self._psf_isolation()
 			self._psf_contained_check()
 			if self.verbose:
@@ -1452,6 +1482,7 @@ class starkiller():
 				print('Extracted spectra')
 			
 			self.fit_spec_residual()
+			self.plot_specs(show=self._show_specs)
 
 			self._check_satellites()
 

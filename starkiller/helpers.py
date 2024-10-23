@@ -17,18 +17,20 @@ from scipy.signal import savgol_filter
 from glob import glob
 import astropy.table as at
 from astropy.coordinates import SkyCoord, Angle
+from astropy.stats import sigma_clipped_stats
 
 from scipy import signal
+from scipy.interpolate import interp1d
 
 from astroquery.vizier import Vizier
-
+from tqdm.notebook import trange, tqdm
 
 import os
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 def get_gaia_region(ra,dec,size=0.4, magnitude_limit = 21):
     """
-    Get the coordinates and mag of all gaia sources in the field of view from the I/355/gaiadr3 catalogue on Vizier.
+    Get the coordinates and mag of all gaia sources in the field of view from the I/355/gaiadr3 catalog on Vizier.
 
     Parameters:
     ----------
@@ -72,6 +74,26 @@ def get_gaia_region(ra,dec,size=0.4, magnitude_limit = 21):
     result['G_mag'] += 0.118 # Correct Gaia G from Vega to AB magnitude system
 
     return result
+
+def _get_skymapper(ra,dec,rad = 0.4,magnitude_limit=25,star_lim=0.8):
+    query = f'https://skymapper.anu.edu.au/sm-cone/public/query?RA={ra}&DEC={dec}&SR={rad}&RESPONSEFORMAT=CSV'
+    sm = pd.read_csv(query)
+    if len(sm) > 0:
+        keep = ['object_id','raj2000','dej2000','u_psf', 'e_u_psf',
+                'v_psf', 'e_v_psf','g_psf', 'e_g_psf','r_psf', 
+                'e_r_psf','i_psf', 'e_i_psf','z_psf', 'e_z_psf','class_star']
+        sm = sm[keep]
+        sm = sm.rename(columns={'raj2000':'RAJ2000','dej2000':'DEJ2000','u_psf':'u_mag',
+                                'v_psf':'v_mag','g_psf':'g_mag','r_psf':'r_mag',
+                                'i_psf':'i_mag','z_psf':'z_mag',
+                                'e_u_psf':'e_umag','e_v_psf':'e_vmag','e_g_psf':'e_gmag',
+                                'e_r_psf':'e_rmag','e_i_psf':'e_imag','e_z_psf':'e_zmag'})
+        sm = sm.loc[sm.rmag <= magnitude_limit]
+        sm = sm.loc[sm.class_star >= star_lim]
+
+    else:
+        sm = None
+    return sm
 
 
 def min_dist(x1,y1,x2,y2):
@@ -136,20 +158,20 @@ def minimize_dist(offset,x1,y1,x2,y2,image):
 
 def basic_image(offset,x,y,image,kernel):
     """
-    Create a simplistic catalogue image from input positions and a convolution kernel. Sources are added to the array then convolved with the kernel.
+    Create a simplistic catalog image from input positions and a convolution kernel. Sources are added to the array then convolved with the kernel.
 
     Parameters
     ----------
     offset : numpy ndarray, list
         Parameters used in the coordinate shift: [0] is the x shify; [1] is the y shift; [3] is the rotation
     x : numpy ndarray 
-        x positions of the catalogue sources 
+        x positions of the catalog sources 
     y : numpy ndarray 
-        y positions of the catalogue sources 
+        y positions of the catalog sources 
     image : numpy ndarray
         Target image, used to get the image dimensions correct.
     kernel : numpy ndarray
-        Convolution kernel to create the simple image from the catalogue sources.
+        Convolution kernel to create the simple image from the catalog sources.
     """
     x,y = transform_coords(x,y,offset,image)
     
@@ -162,7 +184,7 @@ def basic_image(offset,x,y,image,kernel):
 
 def minimize_cats(offset,x,y,image,kernel):
     """
-    Simplistic minimising function for finding an alignment between an image and a catalogue by subtracting a convolved source image from the target image.
+    Simplistic minimising function for finding an alignment between an image and a catalog by subtracting a convolved source image from the target image.
 
     Parameters
     ----------
@@ -173,9 +195,9 @@ def minimize_cats(offset,x,y,image,kernel):
     y : numpy ndarray
         y coordinates of the sources 
     image : numpy ndarray 
-        Boolean image to compare the catalogue positions to.
+        Boolean image to compare the catalog positions to.
     kernel : numpy ndarray 
-        Basic kernel which is used to create a basic image from the x y catalogue positions.
+        Basic kernel which is used to create a basic image from the x y catalog positions.
 
     Returns
     -------
@@ -221,7 +243,7 @@ def transform_coords(x,y,param,image):
 
 def get_star_cuts(x_length,y_length,image,cat,norm=False):
     """
-    Create image cutouts of sources based on xy positions from the input catalogue.
+    Create image cutouts of sources based on xy positions from the input catalog.
 
     Parameters
     ----------
@@ -232,14 +254,14 @@ def get_star_cuts(x_length,y_length,image,cat,norm=False):
     image : numpy ndarray 
         Image to make the cutout from 
     cat : pandas DataFrame 
-        Catalogue of sources containing the xy pixel position
+        Catalog of sources containing the xy pixel position
     norm : Bool
         Option to normalise the cutouts.
 
     Returns
     -------
     star_cuts : numpy ndarray
-        Cutouts of the sources defined in the catalogue 
+        Cutouts of the sources defined in the catalog 
     good : numpy ndarray
         Array of boolean entries defining if sources are good or not. Bad sources are close to the edge.
     """
@@ -283,7 +305,7 @@ def replace_cut(x_length,y_length,image,cuts,cat):
     cuts : numpy ndarray 
         Array of cutouts in the image to be placed back in.
     cat : pandas DataFrame
-        Catalogue of sources containing their coordinates.
+        Catalog of sources containing their coordinates.
 
     Retrurns
     --------
@@ -355,7 +377,7 @@ def psf_spec(cube,psf,data_psf=None,fitpos=True):
     if l < 5:
         r = 2
     else:
-        r = 1
+        r = 0.5
     if fitpos:
         psf.fit_pos(np.nanmean(cube,axis=0),range=r)
         xoff = psf.source_x; yoff = psf.source_y
@@ -398,7 +420,7 @@ def get_specs(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None,fitpos=
     Parameters
     ----------
     cat : pandas DataFrame
-        Catalogue of sources containing their coordinates.
+        Catalog of sources containing their coordinates.
     cube : numpy ndarray
         Input image containing the sources.
     x_length : int
@@ -417,11 +439,11 @@ def get_specs(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None,fitpos=
     Returns
     -------
     specs : list
-        List of spectra for each source in the input catalogue.
+        List of spectra for each source in the input catalog.
     residual : numpy ndarray
         Residual of the PSF fit to the image.
     cat : pandas DataFrame
-        Catalogue of sources containing their coordinates and offsets from the PSF fit.
+        Catalog of sources containing their coordinates and offsets from the PSF fit.
     """
     cuts = cube_cutout(cube,cat,x_length,y_length)
     ind = np.arange(0,len(cuts)+1)
@@ -429,64 +451,7 @@ def get_specs(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None,fitpos=
     specs = []
     residual = []
     sub_cube = deepcopy(cube)
-    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf,data_psf,fitpos) for cut in cuts))
-    #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
-    #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
-    #for i in range(len(cuts)):
-    #   f, r, xo, yo = psf_spec(cuts[i],psf_params)
-    #   flux[i] = f; res[i] = r; xoff[i] = xo; yoff[i] = yo
-
-    residual = np.array(res)
-    cat['x_offset'] = xoff
-    cat['y_offset'] = yoff
-    cat['x'] = cat['xint'].values + xoff
-    cat['y'] = cat['yint'].values + yoff
-    for i in range(len(cuts)):
-        #flux, res, xoff, yoff = psf_spec(cuts[i],psf_params,num_cores=num_cores)
-        spec = S.ArraySpectrum(lam,flux[i]*1e-20,fluxunits='flam',name=cat.iloc[i].id)
-        specs += [spec]
-
-    return specs, residual, cat
-
-
-def get_specs2(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None):
-    """
-    Get the spectra of sources in the input cube.
-
-    Parameters
-    ----------
-    cat : pandas DataFrame
-        Catalogue of sources containing their coordinates.
-    cube : numpy ndarray
-        Input image containing the sources.
-    x_length : int
-        Length of the x dimension of the cutout
-    y_length : int
-        Length of the y dimension of the cutout 
-    psf_params : numpy ndarray
-        Parameters used to create the PSF. [0] is the FWHM; [1] is the length of the PSF; [2] is the angle of the PSF.
-    lam : numpy ndarray
-        Wavelength array of the input cube.
-    num_cores : int
-        Number of cores to use in the fitting process.
-    data_psf : numpy ndarray
-        PSF to use in the fitting process. The default is None, which means a PSF will be created from the input image.
-
-    Returns
-    -------
-    specs : list
-        List of spectra for each source in the input catalogue.
-    residual : numpy ndarray
-        Residual of the PSF fit to the image.
-    cat : pandas DataFrame
-        Catalogue of sources containing their coordinates and offsets from the PSF fit.
-    """
-    cuts = cube_cutout(cube,cat,x_length,y_length)
-    #num_cores = multiprocessing.cpu_count() - 3
-    specs = []
-    residual = []
-    sub_cube = deepcopy(cube)
-    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores)(delayed(psf_spec)(cut,psf,data_psf) for cut in cuts))
+    flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores,verbose=0)(delayed(psf_spec)(cut,psf,data_psf,fitpos) for cut in cuts))
     #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
     #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))
     #for i in range(len(cuts)):
@@ -567,6 +532,30 @@ def psf_spec2(cube,psf,data_psf=None):
     xoff = np.nanmedian(np.array(xoff)); yoff = np.nanmedian(np.array(yoff))
     return flux,residual, xoff, yoff
 
+def _smooth_spec(spec,sigma=5):
+    y = deepcopy(spec.flux)
+    y /= np.nanmedian(y)
+    x = spec.wave
+    dy_dx = np.abs(np.gradient(y, x))
+    m, med, std = sigma_clipped_stats(dy_dx)
+
+    # Define a threshold for the gradient (you may need to tune this)
+    gradient_threshold = med + sigma * std
+
+    # Identify where the gradient exceeds the threshold
+    sharp_feature_mask = (dy_dx > gradient_threshold) & np.isfinite(y) & np.isfinite(x)
+
+    x_valid = x[~sharp_feature_mask]  # x values where sharp features are not present
+    y_valid = y[~sharp_feature_mask]  # corresponding y values
+    # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
+    interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="extrapolate")
+
+    # Apply the interpolation to fill the masked sharp feature regions
+    y_filled = y.copy()
+    y_filled[sharp_feature_mask] = interp_func(x[sharp_feature_mask])
+    y_filled = y_filled * np.nanmedian(y)
+    s = S.ArraySpectrum(x,y,fluxunits='flam',name=str(spec.name)+'_smooth')
+    return s
         
 def downsample_spec(spec,target_lam):
     """
@@ -591,12 +580,15 @@ def downsample_spec(spec,target_lam):
     flux = np.zeros_like(target_lam)
 
     for i in range(len(diff)):
-        low = target_lam[i] - diff[i]/2
-        high = target_lam[i] + diff[i]/2
+        low = target_lam[i] - diff[i]*2
+        high = target_lam[i] + diff[i]*2
         ind = (lam_grid >= low) & (lam_grid <= high)
-        l = lam_grid[ind]
-        f = int_f[ind]
-        flux[i] = np.trapz(f, x=l)
+        #l = lam_grid[ind]
+        #f = int_f[ind]
+        #flux[i] = np.trapz(f, x=l)
+        flux[i] = np.nanmedian(int_f[ind])
+    #flux[0] = int_f[0]; flux[-1] = int_f[-1]
+    #flux = savgol_filter(flux,101,1)
     return flux
 
 def _spec_compare(mod_files,lam,flux):
@@ -661,7 +653,7 @@ def _compare_catalog(model_files,lam,flux):
                                 flux=model['flux'].value,fluxunits='flam',name=name)
     return model, cors[ind]
 
-def match_spec_to_model(spec,catalog='ck+'):
+def match_spec_to_model(specs,mags,pbs,catalog='ck+',num_cores=-1):
     """
     Match an input spectrum to a model spectrum.
 
@@ -670,7 +662,7 @@ def match_spec_to_model(spec,catalog='ck+'):
     spec : pysynphot.spectrum.ArraySpectrum
         Input spectrum
     catalog : str
-        Name of the model catalogue to compare to. The default is 'ck+'.
+        Name of the model catalog to compare to. The default is 'ck+'.
 
     Returns
     -------
@@ -681,51 +673,82 @@ def match_spec_to_model(spec,catalog='ck+'):
     redshift : float
         Redshift of the input spectrum.
     """
-    lam = spec.wave
-    flux = spec.flux
-    flux = savgol_filter(flux,101,1)
+    specs = np.array(specs)
+    #lam = spec.wave
+    #flux = spec.flux
+    #flux = savgol_filter(flux,101,1)
     if 'ck' in catalog.lower():
         path = f'{package_directory}data/ck04_stsci/*'
         #path = f'{package_directory}data/munari05/*'
         model_files = glob(path)
-        model, cor = _compare_catalog(model_files,lam,flux)
-        
+        #model, cor = _compare_catalog(model_files,lam,flux)
+        models, cor, ebvs = _match_obs_to_model(specs,model_files,mags,pbs,num_cores=num_cores)
+
         if '+' in catalog:
-            print('ck ',model.name)
-            print('comparing precise models')
-            temp = int(model.name.split('_')[-2])
-            if temp <= 7000:
+            high_t = []
+            low_t = []
+            low_temps = []
+            high_temps = []
+            for i in range(len(models)):
+                model = models[i]
+                temp = int(model.name.split('_')[-2])
+                if temp <= 7000:
+                    low_t += [i]
+                    low_temps += [temp]
+                elif temp >= 15000:
+                    high_t += [i]
+                    high_temps += [temp]
+            high_t = np.array(high_t)
+            low_t = np.array(low_t)
+            high_temps = np.array(high_temps)
+            low_temps = np.array(low_temps)
+
+            if len(low_t) > 0:
                 path = f'{package_directory}data/marcs-t02/*'
                 model_files = np.array(glob(path))
-                
                 temps = np.array([int(x.split('/')[-1][1:5]) for x in model_files])
-                ul = temp + 500; ll = temp - 500
-                if temp <= 3600:
+                ul = np.max(low_temps) + 500; ll = np.min(low_temps) - 500
+                if np.min(low_temps) <= 3600:
                     ll = 2500
                 ind = (temps >= ll) & (temps <= ul)
+                model_files = model_files[ind]
+                model2, cor2, ebv = _match_obs_to_model(specs[low_t],model_files,mags[low_t],pbs,num_cores=num_cores)
+                ind = cor2 > cor[low_t]
+                #models[low_t][ind] = model2[ind]
+                #cor[low_t][ind] = cor2[ind]
+                #ebvs[low_t][ind] = ebv[ind]
+                models[low_t] = model2
+                cor[low_t] = cor2
+                ebvs[low_t] = ebv
 
-                model2, cor2 = _compare_catalog(model_files[ind],lam,flux)
-                if cor2 > cor:
-                    model = model2
-
-            elif temp >= 15000:
+            if len(high_t) > 0:
                 path = f'{package_directory}data/griddl-ob-i-line/*'
-                model_files = glob(path)
-                model2, cor2 = _compare_catalog(model_files,lam,flux)
-                if cor2 > cor:
-                    model = model2
-            print('precise ',model.name)
-        
+                model_files = np.array(glob(path))
+                model2, cor2, ebv = _match_obs_to_model(specs[high_t],model_files,mags[high_t],pbs,num_cores=num_cores)
+                ind = cor2 > cor[high_t]
+                #models[high_t][ind] = model2[ind]
+                #cor[high_t][ind] = cor2[ind]
+                #ebvs[high_t][ind] = ebv[ind]
+                models[high_t] = model2
+                cor[high_t] = cor2
+                ebvs[high_t] = ebv
 
     elif catalog.lower() == 'eso':
         path = f'{package_directory}data/eso_spec/*'
-        model, cor = _compare_catalog(path,lam,flux)
+        model_files = glob(path)
+        models, cor, ebvs = _match_obs_to_model(specs,model_files,mags,pbs,num_cores=num_cores)#_compare_catalog(path,lam,flux)
+    else:
+        m = '!! No valid model spectral catalog selected !!'
+        raise ValueError(m)
+    redshift = []
+    for spec in specs:
+        shift,zerr, _ = calc_redshift(spec)
+        redshift += [shift]
 
-    #redshift,zerr, _ = calc_redshift(spec)
-    redshift = 0
+    #redshift = 0
     #model = model.redshift(-redshift)
 
-    return model, cor, redshift
+    return models, cor, redshift, ebvs
 
 
 
@@ -753,7 +776,7 @@ def ebv_minimiser(ebv,model,spec,Rv=3.1):
                     apply(fitzpatrick99(model.wave.astype('double'),ebv*Rv,Rv),model.flux))
     interp = ext.sample(spec.wave)
     corr = pearsonr(savgol_filter(spec.flux,101,1),savgol_filter(interp,101,1))[0]
-    res = -corr
+    res = np.log(1-corr)
     
     return res
 
@@ -779,7 +802,7 @@ def fit_extinction(model,spec,Rv = 3.1):
     """
     lam = spec.wave
     ebv0 = 0
-    bounds = [[0,1]]
+    bounds = [[0,10]]
     res = minimize(ebv_minimiser, ebv0,args=(model,spec,Rv),method='Nelder-Mead',bounds=bounds)
     ebv = res.x[0]
     ext = S.ArraySpectrum(model.wave, 
@@ -789,7 +812,7 @@ def fit_extinction(model,spec,Rv = 3.1):
 
 def _norm_spec(spec,mag,pbs):
     """
-    Normalise the spectrum according to the input catalogue magnitudes. If more than 1 filter is present, then the spectrum is mangled to best match all inputs.
+    Normalise the spectrum according to the input catalog magnitudes. If more than 1 filter is present, then the spectrum is mangled to best match all inputs.
 
     Parameters
     ----------
@@ -825,7 +848,7 @@ def _par_spec_fit(spec,pbs,mag,model_type):
     mag : numpy ndarray
         Magnitude of the input spectrum
     model_type : str
-        Name of the model catalogue to compare to.
+        Name of the model catalog to compare to.
 
     Returns
     -------
@@ -838,7 +861,7 @@ def _par_spec_fit(spec,pbs,mag,model_type):
     redshift : float
         Redshift of the input spectrum.
     """
-    model,cor,redshift = match_spec_to_model(spec,model_type)
+    model,cor,redshift = match_spec_to_model(spec,model_type,mags,pbs)
     model2 = _norm_spec(model,mag,pbs)
 
     ext, ebv = fit_extinction(model2,spec)
@@ -862,7 +885,7 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
     filters : numpy ndarray
         Photometric bandpasses corresponding to the input magnitudes.
     model_type : str
-        Name of the model catalogue to compare to. The default is 'ck+'.
+        Name of the model catalog to compare to. The default is 'ck+'.
     num_cores : int
         Number of cores to use in the fitting process. The default is 5.
 
@@ -880,7 +903,8 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
 
     svo_bp=filters
     pbs = load_pbs(svo_bp,0,'AB',SVO=True)
-    cal_model, cors, ebvs, redshift = zip(*Parallel(n_jobs=num_cores)(delayed(_par_spec_fit)(specs[i],pbs,mags[i],model_type) for i in range(len(specs))))
+    model,cors,redshift,ebvs = match_spec_to_model(specs,mags,pbs,model_type,num_cores=num_cores)
+    #cal_model, cors, ebvs, redshift = zip(*Parallel(n_jobs=num_cores)(delayed(_par_spec_fit)(specs[i],pbs,mags[i],model_type) for i in range(len(specs))))
     '''for i in range(len(specs)):
                     model,cor = match_spec_to_model(specs[i],model_type)
                     model2 = my_norm(model,pbs,np.array([cat.Gmag.values[i]]),name=model.name)
@@ -891,7 +915,7 @@ def spec_match(specs,mags,filters,model_type='ck+',num_cores=5):
                     ebvs += [ebv]'''
     ebvs = np.array(ebvs)
     cors = np.array(cors)
-    return cal_model, cors, ebvs, redshift
+    return model, cors, ebvs, redshift
 
 def parallel_psf_fit(image,psf,psf_profile):
     """
@@ -948,8 +972,78 @@ def lam_vac2air(lam):
 
     return air
 
+def _has_len(obj):
+    return hasattr(obj, '__len__')
+
+def _create_model_grid(model,e,Rv=3.1):
+    ext = S.ArraySpectrum(model.wave, 
+                        apply(fitzpatrick99(model.wave.astype('double'),e*Rv,Rv),
+                              model.flux),name=model.name + ' ebv=' + str(e))
+    ext = S.ArraySpectrum(wave=ext.wave,
+                        flux=ext.flux/np.nanmedian(ext.flux),fluxunits='flam',name=ext.name)
+    return ext
 
 
+def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=1):
+    extinctions = np.arange(0,max_ext,0.01)
+    extinctions = np.round(extinctions,3)
+    name = model_file.split('/')[-1].split('.dat')[0]
+    model = at.Table.read(model_file, format='ascii')
+    if '_a' in name:
+        name = name.split('_a')[0]
+    model = S.ArraySpectrum(wave=model['wave'].value,#lam_vac2air(model['wave'].value),
+                            flux=model['flux'].value,fluxunits='flam',name=name)
+    if target_lam is not None:
+        model = S.ArraySpectrum(wave=target_lam,#lam_vac2air(model['wave'].value),
+                                flux=downsample_spec(model,target_lam),fluxunits='flam',name=name)
+    if num_cores == 1:
+        exts = []
+        for i in range(len(extinctions)):
+            exts += [_create_model_grid(model,extinctions[i])]
+    else:
+        exts = Parallel(n_jobs=num_cores)(delayed(_create_model_grid)(model,extinctions[i]) for i in range(len(extinctions)))
+    return exts
+
+def _calc_cor(spec,model_fluxes,num_cores=-1):
+    coeff = np.array([pearsonr(spec.flux,m)[0] for m in model_fluxes])
+    coeff[coeff<0] = 0
+    coeff[~np.isfinite(coeff)] = 0
+    return coeff#[:,0]
+
+def _refactoring(model):
+    flux = model.flux
+    ext = float(model.name.split('=')[-1])
+    return flux, ext
+
+
+def _parallel_match(spec,model_flux):
+    cors = _calc_cor(spec,model_flux)
+    ind = np.argmax(cors)
+    cor = cors[ind]
+    return cor, ind 
+
+def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
+    if not _has_len(obs_spec):
+        obs_spec = [obs_spec]
+    if not _has_len(mags):
+        mags = [mags]
+
+    #for i in range(len(obs_spec)):
+     #   obs_spec[i] = _smooth_spec(obs_spec[i])
+
+    model_grid = Parallel(n_jobs=num_cores)(delayed(_model_grid)(model_files[i],target_lam=obs_spec[0].wave) for i in range(len(model_files)))
+    model_grid = np.array(model_grid).flatten()
+    model_flux, model_ebv = zip(*[_refactoring(m) for m in model_grid])
+    model_flux = np.array(model_flux); model_ebv = np.array(model_ebv)
+    cor, ind = zip(*Parallel(n_jobs=num_cores)(delayed(_parallel_match)(spec, model_flux) for spec in obs_spec))
+    cor = np.array(cor); ind = np.array(ind)
+    model_spec = model_grid[ind]
+    ebv = model_ebv[ind]
+    for i in range(len(model_spec)):
+        model_spec[i] = my_norm(model_spec[i],pbs,mags[i],name=model_spec[i].name)
+
+    return model_spec, cor, ebv
+    
 
 def calc_redshift(spec):
     """
@@ -959,7 +1053,7 @@ def calc_redshift(spec):
         Hb
         NaD
         Ha
-        CaII triplet (I II III)
+        CaII triplet (a b c)
 
     Parameters
     ----------
@@ -1011,22 +1105,29 @@ def calc_redshift(spec):
                 flux =  spec.flux[ind]/cont[i]
 
 
-        fit_mod = fitting.LevMarLSQFitter()
+        fit_mod = fitting.LevMarLSQFitter(calc_uncertainties=True)
 
         finite = np.isfinite(flux)
         if np.nansum(finite) > 10:
             g = fit_mod(mod, wave[finite], flux[finite])
+            covariance = fit_mod.fit_info['param_cov']
             if line == 'NaD':
                 diff = np.mean(np.array([g.mean_1.value/em[0]-1,g.mean_2.value/em[1]-1]))
-                error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
-                pos_er = abs(np.nanmean(np.array([error[2] / (g.mean_1.value-em[0]),error[5] / (g.mean_2.value-em[1])])))
-                amp_er = abs(np.nanmean(error[[1,4]]) / np.nanmean([g.amplitude_1.value,g.amplitude_2.value]))
+                if covariance is not None:
+                    error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
+                    pos_er = abs(np.nanmean(np.array([error[2] / (g.mean_1.value-em[0]),error[5] / (g.mean_2.value-em[1])])))
+                    amp_er = abs(np.nanmean(error[[1,4]]) / np.nanmean([g.amplitude_1.value,g.amplitude_2.value]))
+                else:
+                    pos_er = 10; amp_er = 10
 
             else:
                 diff = g.mean_1 / em[0] - 1
-                error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
-                pos_er = abs(error[2] / (g.mean_1.value-em[0]))
-                amp_er = abs(error[1] / g.amplitude_1.value)
+                if covariance is not None:
+                    error = np.sqrt(np.diag(fit_mod.fit_info['param_cov']))
+                    pos_er = abs(error[2] / (g.mean_1.value-em[0]))
+                    amp_er = abs(error[1] / g.amplitude_1.value)
+                else:
+                    pos_er = 10; amp_er = 10
             m = g(wave)
             cor = pearsonr(m[finite],flux[finite]).correlation
 
@@ -1038,6 +1139,8 @@ def calc_redshift(spec):
             g = None
             cor = 0
             diff = np.nan
+            good = False
+            pos_er = np.nan
         fitted[line] = {'fit':g,'wave':wave,'flux':flux,'shift':diff,'cor':cor,'quality':good,'error':abs(pos_er*diff)}
 
     shift = []
@@ -1047,7 +1150,7 @@ def calc_redshift(spec):
             shift += [fitted[line]['shift']]
             er += [fitted[line]['error']]
     er = np.array(er)
-    shift = np.nansum(shift/er**2)/np.nansum(1/er**2)#np.average(shift,weights=abs(1/er))
+    shift = np.nansum(shift/er**2)/np.nansum(1/er**2) #np.average(shift,weights=abs(1/er))
     er = np.sqrt(1/np.nansum(1/er**2))
     if np.isnan(shift):
         shift = 0
@@ -1153,3 +1256,5 @@ def plot_z_shifts(spec):
     axs['F'].set_ylim(np.min(fitted['CaII_c']['flux'])*.9,np.max(fitted['CaII_c']['flux'])+.05)
 
     plt.tight_layout()
+
+
