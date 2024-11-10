@@ -543,16 +543,17 @@ def _smooth_spec(spec,sigma=5):
     gradient_threshold = med + sigma * std
 
     # Identify where the gradient exceeds the threshold
-    sharp_feature_mask = (dy_dx > gradient_threshold) & np.isfinite(y) & np.isfinite(x)
+    sharp_feature_mask = (dy_dx > gradient_threshold)
+    finite = np.isfinite(y) & np.isfinite(x)
 
-    x_valid = x[~sharp_feature_mask]  # x values where sharp features are not present
-    y_valid = y[~sharp_feature_mask]  # corresponding y values
+    x_valid = x[~sharp_feature_mask & finite]  # x values where sharp features are not present
+    y_valid = y[~sharp_feature_mask & finite]  # corresponding y values
     # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
     interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="extrapolate")
 
     # Apply the interpolation to fill the masked sharp feature regions
     y_filled = y.copy()
-    y_filled[sharp_feature_mask] = interp_func(x[sharp_feature_mask])
+    y_filled[sharp_feature_mask & ~finite] = interp_func(x[sharp_feature_mask & ~finite])
     y_filled = y_filled * np.nanmedian(y)
     s = S.ArraySpectrum(x,y,fluxunits='flam',name=str(spec.name)+'_smooth')
     return s
