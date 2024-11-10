@@ -534,28 +534,32 @@ def psf_spec2(cube,psf,data_psf=None):
 
 def _smooth_spec(spec,sigma=5):
     y = deepcopy(spec.flux)
-    y /= np.nanmedian(y)
-    x = spec.wave
-    dy_dx = np.abs(np.gradient(y, x))
-    m, med, std = sigma_clipped_stats(dy_dx)
+    med = np.nanmedian(y) 
+    if med > 0:
+        y /= med
+        x = spec.wave
+        dy_dx = np.abs(np.gradient(y, x))
+        m, med, std = sigma_clipped_stats(dy_dx)
 
-    # Define a threshold for the gradient (you may need to tune this)
-    gradient_threshold = med + sigma * std
+        # Define a threshold for the gradient (you may need to tune this)
+        gradient_threshold = med + sigma * std
+        # Identify where the gradient exceeds the threshold
+        sharp_feature_mask = (dy_dx > gradient_threshold)
+        finite = np.isfinite(y) & np.isfinite(x)
 
-    # Identify where the gradient exceeds the threshold
-    sharp_feature_mask = (dy_dx > gradient_threshold)
-    finite = np.isfinite(y) & np.isfinite(x)
+        x_valid = x[~sharp_feature_mask & finite]  # x values where sharp features are not present
+        y_valid = y[~sharp_feature_mask & finite]  # corresponding y values
+        # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
+        interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="extrapolate")
 
-    x_valid = x[~sharp_feature_mask & finite]  # x values where sharp features are not present
-    y_valid = y[~sharp_feature_mask & finite]  # corresponding y values
-    # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
-    interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="extrapolate")
-
-    # Apply the interpolation to fill the masked sharp feature regions
-    y_filled = y.copy()
-    y_filled[sharp_feature_mask & ~finite] = interp_func(x[sharp_feature_mask & ~finite])
-    y_filled = y_filled * np.nanmedian(y)
-    s = S.ArraySpectrum(x,y,fluxunits='flam',name=str(spec.name)+'_smooth')
+        # Apply the interpolation to fill the masked sharp feature regions
+        y_filled = y.copy()
+        y_filled[sharp_feature_mask & ~finite] = interp_func(x[sharp_feature_mask & ~finite])
+        y_filled = y_filled * np.nanmedian(y)
+        s = S.ArraySpectrum(x,y,fluxunits='flam',name=str(spec.name)+'_smooth')
+    else:
+        s = deepcopy(spec)
+>>>>>>> 7067cc430cfe4a96804c02dbba542e69c36bf825
     return s
         
 def downsample_spec(spec,target_lam):
@@ -1029,8 +1033,8 @@ def _match_obs_to_model(obs_spec,model_files,mags,pbs,num_cores=-1):
     if not _has_len(mags):
         mags = [mags]
 
-    #for i in range(len(obs_spec)):
-     #   obs_spec[i] = _smooth_spec(obs_spec[i])
+    for i in range(len(obs_spec)):
+        obs_spec[i] = _smooth_spec(obs_spec[i])
 
     model_grid = Parallel(n_jobs=num_cores)(delayed(_model_grid)(model_files[i],target_lam=obs_spec[0].wave) for i in range(len(model_files)))
     model_grid = np.array(model_grid).flatten()

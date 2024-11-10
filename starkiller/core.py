@@ -38,7 +38,7 @@ from joblib import Parallel, delayed
 from scipy import signal
 
 from .helpers import *
-from .helpers import _has_len
+from .helpers import _has_len, _smooth_spec
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
 from .satellite_finder import sat_killer
@@ -1209,18 +1209,18 @@ class starkiller():
 		#	plt.ioff()
 		specs = self.specs
 		model = self.models
-
 		for i in range(len(specs)):
+			smoothed = _smooth_spec(specs[i])
 			fig = plt.figure()
 			plt.title(f'{specs[i].name} cor = {np.round(self.cors[i],2)}')
 			m = sigma_clip(specs[i].flux,sigma=10).mask
 			masked = specs[i].flux[~m]
-			ymarg = (np.max(masked)-np.min(masked)) * 0.05
+			ymarg = (np.max(smoothed.flux)-np.min(smoothed.flux)) * 0.05
 			plt.plot(specs[i].wave,specs[i].flux * 1e16,label='IFU')
 			plt.plot(specs[i].wave,model[i].sample(specs[i].wave)/self.flux_corr * 1e16,'--',label= model[i].name,alpha=0.5)
 			
 			plt.xlim(min(specs[i].wave)*0.9,max(specs[i].wave)*1.1)
-			#plt.ylim(np.min(masked)-ymarg,np.max(masked)+ymarg)
+			plt.ylim(np.min(smoothed.flux)-ymarg,np.max(smoothed.flux)+ymarg)
 			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
 			plt.xlabel(r'Wavelength ($\rm \AA$)')
 			plt.legend(loc='upper left')
