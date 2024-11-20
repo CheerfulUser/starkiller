@@ -52,7 +52,7 @@ If we look at the Blazar spectrum from the Raw and Satellite Subtracted MUSE dat
 
 # Papers where it is used
 
-Starkiller was developed for and first used on the MUSE 2I/Borisov data to remove contamination of streaked sources. More information on this can be found in Deam et al. 2024. Through starkiller we are able to recover observations of this unique transient event that would otherwise have been dropped from the analysis. An example of the data improvement is shown below. 
+Starkiller was developed for and first used on the MUSE 2I/Borisov data to remove contamination of streaked sources. More information on this can be found in Deam et al. 2024. Through starkiller we are able to recover observations of this unique transient event that would otherwise have been dropped from the analysis. Examples of the data improvement are shown in the before and after images below. 
 
 ![plot](./figs/BeforeAfter_starkiller.png)
 
