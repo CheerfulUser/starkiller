@@ -2,5 +2,6 @@ include README.md LICENSE
 include starkiller/data/ck_spec/*
 include starkiller/data/ck04_stsci/*
 include starkiller/data/eso_spec/*
-include starkiller/data/t02_st/*
+include starkiller/data/marcs-t02/*
+include starkiller/data/munari05/*
 include starkiller/data/griddl-ob-i-line/*
