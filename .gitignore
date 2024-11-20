@@ -8,6 +8,11 @@ __pycache__/
 
 # Files 
 *.fits
+*.png
+*.pdf
+*.jpg
+*.csv
+
 
 # Distribution / packaging
 .Python
