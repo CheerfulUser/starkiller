@@ -83,14 +83,19 @@ def _get_skymapper(ra,dec,rad = 0.4,magnitude_limit=25,star_lim=0.8):
                 'v_psf', 'e_v_psf','g_psf', 'e_g_psf','r_psf', 
                 'e_r_psf','i_psf', 'e_i_psf','z_psf', 'e_z_psf','class_star']
         sm = sm[keep]
-        sm = sm.rename(columns={'raj2000':'RAJ2000','dej2000':'DEJ2000','u_psf':'u_mag',
+        sm = sm.rename(columns={'raj2000':'ra','dej2000':'dec','u_psf':'u_mag',
                                 'v_psf':'v_mag','g_psf':'g_mag','r_psf':'r_mag',
                                 'i_psf':'i_mag','z_psf':'z_mag',
                                 'e_u_psf':'e_umag','e_v_psf':'e_vmag','e_g_psf':'e_gmag',
                                 'e_r_psf':'e_rmag','e_i_psf':'e_imag','e_z_psf':'e_zmag'})
-        sm = sm.loc[sm.rmag <= magnitude_limit]
+        sm['id'] = deepcopy(sm['object_id'].values)
+        sm = sm.loc[sm.r_mag <= magnitude_limit]
         sm = sm.loc[sm.class_star >= star_lim]
 
+        sm['r_filt'] = 'SkyMapper/SkyMapper.r'
+        sm['g_filt'] = 'SkyMapper/SkyMapper.g'
+        sm['i_filt'] = 'SkyMapper/SkyMapper.i'
+        sm['z_filt'] = 'SkyMapper/SkyMapper.z'
     else:
         sm = None
     return sm
@@ -374,10 +379,12 @@ def psf_spec(cube,psf,data_psf=None,fitpos=True):
     #             psf_profile='gaussian'+psf_tuning)
        
     l = psf.length
-    if l < 5:
-        r = 2
-    else:
+    if l < 2:
         r = 0.5
+    else:
+        r = 0.05 * l
+        if r > 2:
+            r = 2
     if fitpos:
         psf.fit_pos(np.nanmean(cube,axis=0),range=r)
         xoff = psf.source_x; yoff = psf.source_y
@@ -532,34 +539,43 @@ def psf_spec2(cube,psf,data_psf=None):
     xoff = np.nanmedian(np.array(xoff)); yoff = np.nanmedian(np.array(yoff))
     return flux,residual, xoff, yoff
 
-def _smooth_spec(spec,sigma=5):
+def _smooth_spec(spec,sigma=10,repeats=3,smooth_bin=51):
+    flux = deepcopy(spec.flux)
     y = deepcopy(spec.flux)
-    med = np.nanmedian(y) 
+    med = np.nanmedian(y)
     if med > 0:
-        y /= med
-        x = spec.wave
-        dy_dx = np.abs(np.gradient(y, x))
-        m, med, std = sigma_clipped_stats(dy_dx)
+        for repeat in range(repeats):
+            med = np.nanmedian(y)
+            y /= med
+            x = spec.wave
+            dy_dx = np.abs(np.gradient(y, x))
+            m, med, std = sigma_clipped_stats(dy_dx)
 
-        # Define a threshold for the gradient (you may need to tune this)
-        gradient_threshold = med + sigma * std
-        # Identify where the gradient exceeds the threshold
-        sharp_feature_mask = (dy_dx > gradient_threshold)
-        finite = np.isfinite(y) & np.isfinite(x)
+            # Define a threshold for the gradient (you may need to tune this)
+            gradient_threshold = med + sigma * std
+            # Identify where the gradient exceeds the threshold
+            sharp_feature_mask = (dy_dx > gradient_threshold) | np.isnan(dy_dx)
+            y[sharp_feature_mask] = np.nan
+            finite = np.isfinite(y) & np.isfinite(x)
 
-        x_valid = x[~sharp_feature_mask & finite]  # x values where sharp features are not present
-        y_valid = y[~sharp_feature_mask & finite]  # corresponding y values
-        # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
-        interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="extrapolate")
-
+            x_valid = x[~sharp_feature_mask & finite]  # x values where sharp features are not present
+            y_valid = flux[~sharp_feature_mask & finite]  # corresponding y values
+            if len(x_valid) > 10:
+                # Clip or smooth the spectrum at sharp features (using Gaussian smoothing as an example)
+                interp_func = interp1d(x_valid, y_valid, kind='linear', fill_value="nan",bounds_error=False)
+            else:
+                print('bad')
+                return S.ArraySpectrum(x,y * 0,fluxunits='flam',name=str(spec.name)+'_smooth')
         # Apply the interpolation to fill the masked sharp feature regions
-        y_filled = y.copy()
-        y_filled[sharp_feature_mask & ~finite] = interp_func(x[sharp_feature_mask & ~finite])
-        y_filled = y_filled * np.nanmedian(y)
-        s = S.ArraySpectrum(x,y,fluxunits='flam',name=str(spec.name)+'_smooth')
+        y_filled = flux.copy()
+        y_filled[sharp_feature_mask | ~finite] = interp_func(x[sharp_feature_mask | ~finite])
+        y_filled = y_filled
+
+        y_smooth = savgol_filter(y_filled,smooth_bin,1)
+
+        s = S.ArraySpectrum(x,y_smooth,fluxunits='flam',name=str(spec.name)+'_smooth')
     else:
         s = deepcopy(spec)
->>>>>>> 7067cc430cfe4a96804c02dbba542e69c36bf825
     return s
         
 def downsample_spec(spec,target_lam):
@@ -1010,7 +1026,8 @@ def _model_grid(model_file,target_lam=None,max_ext=4,num_cores=1):
     return exts
 
 def _calc_cor(spec,model_fluxes,num_cores=-1):
-    coeff = np.array([pearsonr(spec.flux,m)[0] for m in model_fluxes])
+    finite = np.isfinite(spec.flux)
+    coeff = np.array([pearsonr(spec.flux[finite],m[finite])[0] for m in model_fluxes])
     coeff[coeff<0] = 0
     coeff[~np.isfinite(coeff)] = 0
     return coeff#[:,0]
@@ -1262,4 +1279,30 @@ def plot_z_shifts(spec):
 
     plt.tight_layout()
 
+
+from astropy.stats import SigmaClip
+from photutils.background import Background2D, MedianBackground
+
+
+def __bkg_calc(data,box_size,filter_size,sigma_clip,bkg_estimator,mask=None):
+    if mask is None:
+        bkg = Background2D(data, (box_size,box_size), filter_size=(filter_size,filter_size),
+                           sigma_clip=sigma_clip, bkg_estimator=bkg_estimator,fill_value=0.0)
+    else:
+        bkg = Background2D(data, (box_size,box_size), filter_size=(filter_size,filter_size),
+                           sigma_clip=sigma_clip, bkg_estimator=bkg_estimator,coverage_mask=mask,fill_value=0.0)
+    background = bkg.background
+    return background
+
+def _calc_bkg(data,mask=None,box_size=6,filter_size=7,num_cores=-1):
+    sigma_clip = SigmaClip(sigma=3.0)
+    bkg_estimator = MedianBackground()
+    background = np.zeros_like(data)
+    if np.isfinite(data).any():
+        if len(data.shape) < 3:
+            background = __bkg_calc(data,box_size,filter_size,sigma_clip,bkg_estimator,mask)
+        else:
+            b = Parallel(n_jobs=num_cores,verbose=0)(delayed(__bkg_calc)(d,box_size,filter_size,sigma_clip,bkg_estimator,mask) for d in data)
+            background = np.array(b)
+    return background
 

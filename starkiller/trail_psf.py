@@ -446,6 +446,8 @@ class create_psf():
             Image to fit the position of the source to.
         range : float
             Range to fit the position of the source over.
+        data : bool
+            Option to use the data PSF
 
         Returns
         -------
@@ -487,7 +489,7 @@ class create_psf():
         res = np.nansum(abs(image - (self.longpsf*coeff[0] + coeff[1])))
         return res
 
-    def psf_flux(self,image,output = True):
+    def psf_flux(self,image):
         """
         Fit the flux of the PSF to the input image.
 
@@ -495,6 +497,7 @@ class create_psf():
         ----------
         image : 2d numpy array
             Image to fit the PSF to.
+
 
         Returns
         -------
@@ -520,6 +523,7 @@ class create_psf():
             self.generate_line_psf(shiftx=self.source_x,shifty=self.source_y)
         res = minimize(self.minimize_psf_flux,f0,args=(image),method='Nelder-Mead')
         self.flux = res.x[0]
+        self.background = res.x[1]
         self.image_residual = image - self.longpsf*self.flux
 
         if 'data' in self.psf_profile:

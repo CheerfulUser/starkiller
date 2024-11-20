@@ -38,12 +38,14 @@ from joblib import Parallel, delayed
 from scipy import signal
 
 from .helpers import *
-from .helpers import _has_len, _smooth_spec
+from .helpers import _has_len, _smooth_spec, _get_skymapper, _calc_bkg
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
 from .satellite_finder import sat_killer
 import pysynphot as S
 from scipy.interpolate import interp1d
+
+
 
 import warnings
 warnings.filterwarnings("ignore") #Shhhhhhh, it's okay
@@ -78,9 +80,9 @@ class starkiller():
 		catalog : pandas DataFrame
 			Catalog of sources to use. If None, then the catalog specified in get_catalog is used.
 		get_catalog : str
-			Online catalog to download for the reduction. This can be either Gaia, or Skymapper
+			Online catalog to download for the reduction. This can be either Gaia, or Skymapper. Gaia is recommended.
 		spec_catalog : str
-			Spectral catalog to use, options are 'ck' or 'pickles', default is 'ck'.
+			Spectral catalog to use, options are 'ck', 'ck+' and 'eso', default is 'ck'.
 		key_filter : str
 			Filter to use for the catalog, if None then the first filter in the catalog is used.
 		ref_filter : str
@@ -88,27 +90,34 @@ class starkiller():
 		psf_profile : str
 			Profile to use for the PSF, options are 'gaussian' or 'moffat', default is 'gaussian'.
 		wcs_correction : boolean
-			Whether or not to correct the WCS coordinates, default is True.
+			Option to correct the WCS coordinates, default is True.
 		psf_preference : str
-			Whether to use the PSF from the data or the PSF from the model, options are 'data' or 'model', default is 'data'.
+			Option to use the PSF from the data or the PSF from the model, options are 'data' or 'model', default is 'data'.
 		plot : boolean
-			Whether or not to plot the reduction, default is True.
+			Option to plot the reduction, default is True.
 		run : boolean
-			Whether or not to run the reduction, default is True.
+			Option to run the reduction, default is True.
 		verbose : boolean
-			Whether or not to print to the terminal, default is True.
+			Option to print to the terminal, default is True.
 		numcores : int
 			Number of cores to use when running the reduction, default is 5.
 		rerun_cal : boolean
-			Whether or not to rerun the calibration, default is False.
+			Option to rerun the calibration, default is False.
 		calc_psf_only : boolean
-			Whether or not to only calculate the PSF, default is False.
+			Option to only calculate the PSF, default is False.
 		flux_correction : boolean
-			Whether or not to correct the flux of the sources, default is True.
+			Option to correct the flux of the sources, default is True.
 		wavelength_sol : str
-			Whether to use the wavelength solution in air or vacuum, options are 'air' or 'vacuum', default is 'air'.
+			Option to use the wavelength solution in air or vacuum, options are 'air' or 'vacuum', default is 'air'.
 		show_specs : boolean
-			Whether or not to show the spectra of the sources, default is False.
+			Option to show the spectra of the sources, default is False.
+		fuzzy : boolean
+			Option to search for an extended fuzzy source such as a nebula or galaxy and create a relevant mask
+		satellite : boolean
+			Option to search for and model satellite streaks in the data
+		force_flux_correction : boolean
+			Option to use the flux correction even if just only 1 source is available
+
 
 		Examples:
 		---------
@@ -119,6 +128,10 @@ class starkiller():
 		For siderially tracked data
 		>>> from starkiller import starkiller
 		>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',trail=False)
+
+		For siderially tracked data containing an extended source e.g. nebula
+		>>> from starkiller import starkiller
+		>>> starkiller('data/ifu.fits',model_maglim=25,cal_maglim=18,savepath='save_location',trail=False,fuzzy=True)
 
 		"""
 		self.file = file
@@ -140,14 +153,15 @@ class starkiller():
 		self._force_flux_correction = force_flux_correction
 		self._search_satellite = satellite
 		self._psf_align = psf_align
+		self.__download_cat = get_catalog
 
 		if (key_filter is None) & (catalog is None):
 			if get_catalog.lower() == 'gaia':
 				self.key_filter = 'G'
 				self.ref_filter = 'G_mag'
 			elif get_catalog.lower() == 'skymapper':
-				self.key_filter = 'i'
-				self.ref_filter = 'i_mag'
+				self.key_filter = 'r'
+				self.ref_filter = 'r_mag'
 		else:
 			self.key_filter = key_filter + '_mag'
 		
@@ -186,7 +200,7 @@ class starkiller():
 
 	def _load_cube(self):
 		"""
-		Load the cube from a fits file, and create the image.
+		Load the cube from a fits file, create the image, and calculate backgrounds.
 
 		"""
 		self.hdu = fits.open(self.file)
@@ -204,9 +218,23 @@ class starkiller():
 		self.bright_mask = self.image > np.nanpercentile(self.image,90)
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
 
+		self.bkg_image = _calc_bkg(self.image)
+		self.bkg_cube = _calc_bkg(self.cube,num_cores=self.numcores)
+
+		#self.image -= self.bkg_image
+		#self.cube -= self.bkg_cube
+
 	def _get_cat(self,catalog='gaia'):
 		"""
 		Load a catalog, if none is specified then Gaia DR3 is used.
+
+		Parameters:
+		-----------
+		catalog : str
+			String for the external catalog to be downloaded, this can be either `gaia' or `skymapper'.
+			Using `gaia' is recommended.
+
+			This will be updated to include LSST.
 		"""
 		if self.cat is None:
 			origin = np.array(self.wcs.all_pix2world(0,0,0,0))[:2]
@@ -218,7 +246,8 @@ class starkiller():
 				self.cat = self.cat.sort_values('G_mag')
 				ind = self.cat.G_mag.values < self.model_maglim
 			elif catalog.lower() == 'skymapper':
-				self.cat = _get_skymapper(self.ra,self.dec,size.deg.value,magnitude_lim=self.model_maglim)
+				self.cat = _get_skymapper(self.ra,self.dec,size.deg,magnitude_limit=self.model_maglim)
+				ind = self.cat[self.ref_filter].values < self.model_maglim
 			if self.verbose:
 				print(f'Number of sources brighter than {self.model_maglim}: {sum(ind)}')
 			#if np.sum(ind) < 2:
@@ -534,8 +563,13 @@ class starkiller():
 		s = (np.nanmedian(cims,axis=0) > 0.5) * 1.
 		ty,tx = np.where(s > 0)
 		s = s[min(ty)-3:max(ty)+4,min(tx)-3:max(tx)+4]
-		
+
+		#if self.cal_maglim > 17:
+		#	lim = 17
+		#else:
+		#	lim = self.cal_maglim
 		cat_ind = self.cal_maglim > self.cat[self.ref_filter].values
+
 		x, y, _ = self.wcs.all_world2pix(self.cat.ra.values[cat_ind],self.cat.dec.values[cat_ind],0,0)
 		# brute force it
 		X,Y = np.meshgrid(np.arange(-100,100,10),np.arange(-100,100,10))
@@ -746,7 +780,7 @@ class starkiller():
 		if np.nansum(self.fuzzy_mask) > 0:
 			fuzz = (self.fuzzy_mask[self.cat['y'].values[ind].astype(int),self.cat['x'].values[ind].astype(int)] == 1)
 			self.cat['fuzz'].iloc[ind] = fuzz * 1
-			ind[ind] = fuzz
+			ind[ind] = ~fuzz
 
 
 		self.cat['cal_source'] = 0 
@@ -875,6 +909,7 @@ class starkiller():
 
 		params = np.array(params)
 		shifts = np.array(shifts)
+		
 		self.psf_param = np.nanmedian(params,axis=0)
 		if 'moffat' in self.psf_profile:
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=self.psf_param[0],
@@ -930,9 +965,15 @@ class starkiller():
 			plot = self.plot
 		if self.verbose:
 			print('Calculating PSF coord shift')
-		sources = deepcopy(self.cat.iloc[self.cat.cal_source.values == 1])#.iloc[self.good_cals])
-		catx = deepcopy(sources.x.values); caty = deepcopy(sources.y.values)
+		sources = deepcopy(self.cat.loc[self.cat['cal_source'] == 1])#.iloc[self.good_cals])
+		catx = deepcopy(sources['xint'].values); caty = deepcopy(sources['yint'].values)
 		sourcex = catx + shifts[:,0]; sourcey = caty + shifts[:,1]
+		self.cat['x_fit'] = 0; self.cat['y_fit'] = 0
+		print(sourcex)
+		print(sourcey)
+		self.cat['x_fit'].iloc[self.cat['cal_source'].values == 1] = sourcex
+		self.cat['y_fit'].iloc[self.cat['cal_source'].values == 1] = sourcey
+
 		bounds = [[-15,15],[-15,15],[0,np.pi/2]]
 		x0 = [0,0,0]
 		res = minimize(minimize_dist,x0,args=(catx,caty,sourcex,sourcey,self.image),method='Nelder-Mead',bounds=bounds)
@@ -1026,6 +1067,7 @@ class starkiller():
 			if self.psf_preference == 'data':
 				self.psf_preference = 'model'
 				print('!!! Messy field, dissabling data psf !!!')
+		self.cat = self.cat.loc[self.cat['containment'] > 0]
 
 		
 
@@ -1184,7 +1226,7 @@ class starkiller():
 		data_psf = None
 		if 'data' in self.psf_profile:
 			data_psf = self.psf.data_psf
-		specs, residual, cat_off = get_specs(self.cat,self.cube,self.x_length,self.y_length,
+		specs, residual, cat_off = get_specs(self.cat,self.cube - self.bkg_cube,self.x_length,self.y_length,
 											 self.psf,self.lam,num_cores=self.numcores,
 											 data_psf=data_psf)
 		self.cat = cat_off
@@ -1210,17 +1252,19 @@ class starkiller():
 		specs = self.specs
 		model = self.models
 		for i in range(len(specs)):
-			smoothed = _smooth_spec(specs[i])
+			smoothed = _smooth_spec(specs[i],10,3)
 			fig = plt.figure()
 			plt.title(f'{specs[i].name} cor = {np.round(self.cors[i],2)}')
 			m = sigma_clip(specs[i].flux,sigma=10).mask
 			masked = specs[i].flux[~m]
-			ymarg = (np.max(smoothed.flux)-np.min(smoothed.flux)) * 0.05
+			ymarg = (np.nanmax(smoothed.flux)-np.nanmin(smoothed.flux)) * 0.5
 			plt.plot(specs[i].wave,specs[i].flux * 1e16,label='IFU')
 			plt.plot(specs[i].wave,model[i].sample(specs[i].wave)/self.flux_corr * 1e16,'--',label= model[i].name,alpha=0.5)
 			
 			plt.xlim(min(specs[i].wave)*0.9,max(specs[i].wave)*1.1)
-			plt.ylim(np.min(smoothed.flux)-ymarg,np.max(smoothed.flux)+ymarg)
+			y_low = (np.nanmin(smoothed.flux)-ymarg) * 1e16
+			y_high = (np.nanmax(smoothed.flux)+ymarg) * 1e16
+			plt.ylim(y_low,y_high)
 			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
 			plt.xlabel(r'Wavelength ($\rm \AA$)')
 			plt.legend(loc='upper left')
@@ -1233,6 +1277,9 @@ class starkiller():
 
 
 	def _check_satellites(self):
+		"""
+		Executes the satellite finding and modelling routines.
+		"""
 		if self._search_satellite:
 			if self.verbose:
 				print('Checking for satellites')
@@ -1244,10 +1291,23 @@ class starkiller():
 				self._search_satellite = False
 
 	def force_spec(self,x,y,fitpos=True,cube=None):
+		"""
+		Obtain a spectrum at the specified location.
+
+		Parameters:
+		x : float 
+			x pixel position (image axis 1)
+		y : float 
+			y pixel position (image axis 0)
+		fitpos : bool
+			Option to fit the source position when extracting the spectrum through PSF methods
+		cube : array
+			User input 3d datacube. If none is specified then self.cube is used.
+		"""
 		if (type(x) == float) | (type(x) == int):
 			x = [x]; y = [y]
 		if cube is None:
-			cube = self.cube
+			cube = self.cube - self.bkg_cube
 		cat = pd.DataFrame([])
 		cat['x'] = x; cat['y'] = y
 		cat['xint'] = cat['x'].values.astype(int); cat['yint'] = cat['y'].values.astype(int)
@@ -1444,7 +1504,7 @@ class starkiller():
 		"""
 		try:
 			self._load_cube()
-			self._get_cat()
+			self._get_cat(self.__download_cat)
 			#self._estimate_trail_angle(trail)
 			#self._find_sources_DAO()
 			self._find_fuzzy_mask()
@@ -1473,14 +1533,11 @@ class starkiller():
 			if self._calc_psf_only:
 				print('Exiting')
 				return
-			self.calc_background()
-			if self.verbose:
-				print('Background subtracted')
-			#self.cal_spec()
 			self.all_spec()
 			if self.verbose:
 				print('Extracted spectra')
-			
+			if self.verbose:
+				print('Background added')
 			self.fit_spec_residual()
 			self.plot_specs(show=self._show_specs)
 

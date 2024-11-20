@@ -60,8 +60,13 @@ class cube_simulator():
             Dataframe containing the catalog positions of all sources to simulate.
         repFact : int
             Replication factor controls the supersampling and downsampling.
+        padding : int
+            Value to pad the sides of the cube by to capture sources centered outside the original image bounds.
         datapsf : bool
             Option to force the selection of the datapsf from the psf class.
+        satellite : satkiller
+            Class information for modelling the satellite streaks. 
+
 
         """
         self.xdim = cube.shape[2] + 2*padding
@@ -85,7 +90,7 @@ class cube_simulator():
     
     def _stack_median(self):
         """
-        Creates a median of the inout data cube
+        Creates a median of the input data cube
         """
         return np.nanmedian(self.cube,axis=0)
     
