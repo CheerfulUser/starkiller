@@ -113,6 +113,8 @@ class starkiller():
 			Option to show the spectra of the sources, default is False.
 		fuzzy : boolean
 			Option to search for an extended fuzzy source such as a nebula or galaxy and create a relevant mask
+		background : boolean
+			Option to turn off the background subtraction step. If False the background is set to 0
 		satellite : boolean
 			Option to search for and model satellite streaks in the data
 		force_flux_correction : boolean
