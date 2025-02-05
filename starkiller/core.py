@@ -61,7 +61,7 @@ class starkiller():
 				 psf_profile='gaussian',wcs_correction=True,psf_align=True,
 				 psf_preference='data',plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
-				 show_specs=False,fuzzy=False,satellite=False,force_flux_correction=False):
+				 show_specs=False,fuzzy=False,background=False,satellite=False,force_flux_correction=False):
 		"""
 		Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
 
@@ -154,6 +154,7 @@ class starkiller():
 		self._search_satellite = satellite
 		self._psf_align = psf_align
 		self.__download_cat = get_catalog
+		self._background = background
 
 		if (key_filter is None) & (catalog is None):
 			if get_catalog.lower() == 'gaia':
@@ -217,9 +218,12 @@ class starkiller():
 		#self.image[np.isnan(self.image)] = 0
 		self.bright_mask = self.image > np.nanpercentile(self.image,90)
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
-
-		self.bkg_image = _calc_bkg(self.image)
-		self.bkg_cube = _calc_bkg(self.cube,num_cores=self.numcores)
+		if self._background:
+			self.bkg_image = _calc_bkg(self.image)
+			self.bkg_cube = _calc_bkg(self.cube,num_cores=self.numcores)
+		else:
+			self.bkg_image = np.zeros(self.image)
+			self.bkg_cube = np.zeros(self.cube)
 
 		#self.image -= self.bkg_image
 		#self.cube -= self.bkg_cube
