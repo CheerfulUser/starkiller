@@ -224,8 +224,8 @@ class starkiller():
 			self.bkg_image = _calc_bkg(self.image)
 			self.bkg_cube = _calc_bkg(self.cube,num_cores=self.numcores)
 		else:
-			self.bkg_image = np.zeros(self.image)
-			self.bkg_cube = np.zeros(self.cube)
+			self.bkg_image = np.zeros_like(self.image)
+			self.bkg_cube = np.zeros_like(self.cube)
 
 		#self.image -= self.bkg_image
 		#self.cube -= self.bkg_cube
