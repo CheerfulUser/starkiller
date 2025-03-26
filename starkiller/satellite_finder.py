@@ -332,8 +332,8 @@ class sat_killer():
             flux,res = zip(*Parallel(n_jobs=self.num_cores)(delayed(psf.psf_flux)(image) for image in cut))
             sat_fluxes += [np.array(flux)]
             
-            self.satcat['x'].iloc[i] = self.satcat['xint'].values + xoff
-            self.satcat['y'].iloc[i] = self.satcat['yint'].values + yoff
+            self.satcat['x'].iloc[i] = self.satcat['xint'].values[i] + xoff
+            self.satcat['y'].iloc[i] = self.satcat['yint'].values[i] + yoff
             self.satcat['xoff'] = xoff
             self.satcat['yoff'] = yoff
         self.sat_fluxes = np.array(sat_fluxes) #* 1e-20
