@@ -257,11 +257,7 @@ class create_psf():
             ind = (X >= 0) & (X < self.line2d.shape[1]) & (Y >= 0) & (Y < self.line2d.shape[0])
             self.line2d[Y[ind],X[ind]]=1.0
 
-<<<<<<< HEAD
             # w=np.where(self.line2d>0)
-=======
-            w=np.where(self.line2d>0)
->>>>>>> 2b6ce4956d144693ae7b89c34dc6adfc352a4dce
             # yl,yh=np.min(w[0]),np.max(w[0])
             # xl,xh=np.min(w[1]),np.max(w[1])
         
