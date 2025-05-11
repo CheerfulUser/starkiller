@@ -1327,4 +1327,56 @@ def bin_spec(spec,bin_factor=100):
     
     return s
         
+
+from AstroColour.AstroColour import RGB
+
+def make_false_colour(cube, savePath:str, saveName:str, scaleNorm:str="linear"):
+    """
+    Using AstroColour by zgl12 to false colour a cube. 
+    Inputs:
+    ------
+        cube
+
+        savePath:str, required
+            The path to save the image to
+        saveName:str, required
+            The name of the image (without a file extension)
+        scaleNorm: str, optional
+            The Norm to scale the images by, default "Linear". Other options include "log", "sinh", "asinh"
     
+    Outputs:
+    --------
+        colour: ndarray
+            the scaled slices of the cube that can then be used for reploting
+    """
+    thirds = int(cube[0]/3)
+
+    blueCube = cube[:thirds,:,:] 
+    greenCube = cube[thirds:2*thirds,:,:] 
+    redCube = cube[2*thirds:,:,:] 
+
+    blueIm = np.nansum(blueCube, axis=0)
+    greenIm = np.nansum(greenCube, axis=0)
+    redIm = np.nansum(redCube, axis=0)
+
+    imList = [redIm, greenIm,blueIm]
+
+    rgb = RGB(
+        imList,
+        colours=['red', 'green', 'blue'],
+        intensities=[0.55, 1, 0.6],
+        uppers=[99, 99, 99],
+        lowers=[60, 50, 50],
+        save=True,
+        save_name=saveName,
+        save_folder=savePath,
+        gamma=1.5,
+        norm=scaleNorm,
+        min_separation=29,
+        star_size=5,
+        epsf_plot=False,
+        epsf=False,
+        manual_override=20
+    )
+    colour = rgb.plot()
+    return colour
