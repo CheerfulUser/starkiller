@@ -8,6 +8,8 @@ from .helpers import *
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from scipy import ndimage
+from scipy.signal import find_peaks
 
 
 class sat_killer():
@@ -332,8 +334,8 @@ class sat_killer():
             flux,res = zip(*Parallel(n_jobs=self.num_cores)(delayed(psf.psf_flux)(image) for image in cut))
             sat_fluxes += [np.array(flux)]
             
-            self.satcat['x'].iloc[i] = self.satcat['xint'].values + xoff
-            self.satcat['y'].iloc[i] = self.satcat['yint'].values + yoff
+            self.satcat['x'].iloc[i] = self.satcat['xint'].values[i] + xoff
+            self.satcat['y'].iloc[i] = self.satcat['yint'].values[i] + yoff
             self.satcat['xoff'] = xoff
             self.satcat['yoff'] = yoff
         self.sat_fluxes = np.array(sat_fluxes) #* 1e-20
@@ -381,6 +383,156 @@ class sat_killer():
         if plot:
             self.plot_spatial_specs()
 
+
+    def scan_for_parallel_streaks(self, interestWidth:int,peakWidth:int = 1, plotting:bool=False, diagnosing:bool= False, saving:bool=False):
+        """Rotates and Scans horizontally for streaks (ble61)
+        Inputs:
+        -------
+            interestWidth: int, required
+                The search width around a Hough transform found peak to scan for other peaks. 
+
+            peakWidth: int, optional
+                The FWHM of the assumed Gaussian streaks. It is to be used to check the distance between peaks.
+                Default 1, suggested to be ~5
+
+            plotting: bool, optional
+                Decide to plot the outputs by setting True. Default False. Some of the on image plots are made elsewhere, so should probably remain False.
+            
+            diagnosing: bool, optional
+                Plot even more checks of the functionallity. Default False. These are not plots made elsewhere, but also not helpful when they are working as intended.
+            
+            saving: bool optional
+                If the figures should be saved
+        """
+        print(f"Scanning file {self.savename}")
+        oldStreakCoefs = self.streak_coef
+        xLen = self.image.shape[1]
+
+        print(f"Old streak coefiecents are: \n     {oldStreakCoefs}")
+        newStreakCoefs = []
+        
+        for sNum,streak_coef in enumerate(oldStreakCoefs):
+            #basic streak properties
+            m = streak_coef[0]
+            c = streak_coef[1]
+            theta = np.arctan(m) 
+            
+            #rotate image
+            rotIm = ndimage.rotate(self.image, np.degrees(theta), cval=np.nan)
+            rotIm = rotIm.astype(np.float64)
+            rotIm[rotIm==0] = np.nan
+            
+            #Project found streak to rotated axis
+            offset = np.sin(theta)*xLen
+            if theta <0:
+                offset=0
+
+            cPrime = int(round(c *np.cos(theta) +offset,0))
+            
+            #Scanning along rows
+            medVals = np.nanmedian(rotIm, axis=1)
+            
+            #Stats for whole axis
+            mean, med, sig = sigma_clipped_stats(medVals)
+        
+            # #only looking close to streak
+            # ofInterest = medVals[cPrime-interestWidth:cPrime+interestWidth] #!could be <0 or >len, so need to fix
+            #*fix with min/max vals
+            minVal = cPrime-interestWidth
+            maxVal = cPrime +interestWidth
+
+            if minVal<0:
+                minVal=0
+            if maxVal>= len(medVals):
+                maxVal = len(medVals)-1
+
+            #only looking close to streak
+            ofInterest = medVals[minVal:maxVal]
+
+            #* uses peakWidth as FWHM of peaks 
+            pPrime , _ = find_peaks(ofInterest, height=mean + 5*sig, distance=peakWidth) 
+    
+            pPrime += minVal #gets into correct 0 for coords
+
+            newIntercepts = ((pPrime-offset) / np.cos(theta))
+            print(f"Streak {streak_coef} rotation and scan complete. \nFound {newIntercepts} as new Intercepts for the gradient {m}")
+            
+            for p in newIntercepts:
+                newStreakCoefs.append([m,p])
+            
+            if plotting and diagnosing:
+
+                fig2, ax2 = plt.subplots()
+                ax2.imshow(rotIm, origin="lower")
+
+                fig3, ax3 = plt.subplots(figsize=(12,6))
+                ax3.plot(medVals)
+                # ax2.set(xlim=(cPrime-60,cPrime +60))
+                ax3.axhline(mean + 5*sig, label=f"Detection lower limit, $\mu + 5\sigma$", ls=":", c="r")
+                ax3.vlines(np.round(oldStreakCoefs[:,1] *np.cos(theta) +offset,0).astype(int),0,np.max(medVals)+10, label="Detected Satellites", colors="k")
+                # ax3.vlines(pPrime,0,255)
+                ax3.set(xlabel="Row", ylabel ="Median Intensity")
+                ax3.legend()
+
+                fig4, ax4 = plt.subplots(figsize=(12,6))
+                ax4.plot(np.arange(len(ofInterest))-cPrime+minVal, ofInterest)
+                ax4.vlines([pPrime-cPrime], 0,np.max(ofInterest)+10, colors="g", label="Found Peaks")
+                ax4.axvline(0, c="k", label="Hough Transfrom Detection")
+                ax4.set(xlabel="Rows From Detection", ylabel ="Median Intensity")
+                ax4.legend()
+
+                if saving and self.savename is not None:
+                    # sName = fileName.split("/")[-1].split(".")[:-1]
+                    # sName = ".".join(sName)
+                    fig3.savefig(f"{self.savename}_MedVals{sNum}.png")
+                    fig4.savefig(f"{self.savename}_MedPeakFound{sNum}.png")
+
+        newStreakCoefs = np.array(newStreakCoefs)
+        duplicates = []
+        #* This gets some of the double ups from lines being not joined properly. 
+        for i, c in enumerate(newStreakCoefs[:,1]):
+            for j, c2 in enumerate(newStreakCoefs[:,1]):
+                if np.abs(c-c2) < peakWidth and i>j:
+                    duplicates.append(i) 
+
+        newStreakCoefs = np.delete(newStreakCoefs, duplicates, axis=0) #removes doubleups
+
+        if plotting:
+            fig, ax = plt.subplots(figsize=(10,10))
+            ax.imshow(self.image, cmap="gray")
+            xx = np.arange(xLen)
+            
+            for i, streak in enumerate(oldStreakCoefs):
+                oldM= streak[0]
+                oldC= streak[1]
+                ax.plot(xx, oldM*xx + oldC, c=f"C{i+1}", ls="--",lw=5, label=f"Sat {i+1}")
+            ax.set(ylim=(0,self.image.shape[0]))
+            ax.legend()
+
+            fig5, ax5 = plt.subplots(figsize=(10,10))
+            ax5.imshow(self.image, cmap="gray")
+
+            for i, streak in enumerate(newStreakCoefs):
+                newC  = streak[1] 
+                ax5.plot(xx, m*xx+newC,c=f"C{i+1}",ls="--",lw=5, label=f"New Sat {i+1}")
+
+            ax5.set(ylim=(0,self.image.shape[0]))
+            ax5.legend()
+
+            if saving and self.savename is not None:
+                # sName = fileName.split("/")[-1].split(".")[:-1]
+                # sName = ".".join(sName)
+                fig.savefig(f"{self.savename}_OldSats.png")
+                fig5.savefig(f"{self.savename}_NewSats.png")
+
+        print(f"\n The New Streak Coefs are \n {newStreakCoefs}\n")
+        self.streak_coef = newStreakCoefs #* set class variable to what was found inside method, as is standard here
+        if len(newStreakCoefs) > 0:  
+            #This was at the end of matchlines, when new coeffs were found, so doing it again here for consistency.
+            #TODO Check if it needs to be done again.
+            self._find_center() 
+
+
     def __detection_funcs(self,threshold):
         self._set_threshold(threshold)
         self._dilate()
@@ -389,6 +541,7 @@ class sat_killer():
         if len(self.lines) > 1:
             self._match_lines(close=5,minlines=0)
             self._match_lines(close=60,minlines=1)
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5)
             self.__lc_variation_test()
             self.__lc_stars_vetting()
             if len(self.streak_coef) > 0:
