@@ -1306,3 +1306,25 @@ def _calc_bkg(data,mask=None,box_size=6,filter_size=7,num_cores=-1):
             background = np.array(b)
     return background
 
+
+def bin_spec(spec,bin_factor=100):
+    wave = spec.wave
+    flux = spec.flux
+    if bin_factor > 1:
+        l = int((wave[1] - wave[0]) * bin_factor)
+        w = np.arange(wave[0],wave[-1],l)
+        f = np.zeros_like(w)
+        for i in range(len(w)-1):
+            if i == len(w) - 1:
+                ind = (wave >= w[i]) & (wave < l[-1])
+            else:
+                ind = (wave >= w[i]) & (wave < w[i+1])
+            f[i] = np.nansum(flux[ind])
+    else:
+        w = wave
+        f = flux
+    s = np.array([w[:-1],f[:-1]])
+    
+    return s
+        
+    

@@ -132,6 +132,10 @@ class sat_killer():
         n_coefs =[]
         for i in d_bool:
             n_coefs += [np.nanmean(self.streak_coef[i],axis=0)]
+        ## Unsure if this is needed
+        #ind = np.sum(d_bool,axis=1) <= minlines
+        #for i in d_bool:
+        #    n_coefs += [self.streak_coef[i]]
         n_coefs = np.array(n_coefs)
         self.streak_coef = n_coefs
         if len(n_coefs) > 0:
@@ -410,7 +414,7 @@ class sat_killer():
         
 
 
-    def plot_spatial_specs(self):
+    def plot_spatial_specs(self,bin_size=1):
         for linecat in self.spatial_specs:
             cmap = plt.get_cmap('viridis')
             norm = plt.Normalize(0, len(linecat))
@@ -425,10 +429,12 @@ class sat_killer():
             plt.subplot(122)
             for i in range(len(linecat)):
                 spec = linecat['spec'].iloc[i]
-                nf = spec.flux/np.nanmedian(spec.flux)
+                s = bin_spec(spec,bin_size)
+                flux = s[1]; wave = s[0]
+                nf = flux/np.nanmedian(flux)
 
                 if np.nanstd(nf) < 1:
-                    plt.plot(spec.wave,spec.flux/np.nanmedian(spec.flux)+(i+1)*2,c=colours[i],alpha=0.6)#1-i/len(linecat))
+                    plt.plot(wave,flux/np.nanmedian(flux)+(i+1)*2,c=colours[i],alpha=0.6)#1-i/len(linecat))
             plt.ylabel('Normalised counts + offset',fontsize=12)
             plt.xlabel(r'Wavelength ($\rm \AA$)',fontsize=12)
             #col = plt.colorbar()
@@ -437,14 +443,10 @@ class sat_killer():
             plt.savefig('satellite_trail.png')
 
 
+    def save_specs(self,savepath='.',spatial=False):
+        for i in range(len(self.sat_fluxes)):
+            save = np.array([self.wavelength,self.sat_fluxes[i]]).T
+            np.save(savepath + f'sat_{i+1}.png',save)
 
 
 
-
-
-
-
-
-
-
-            
