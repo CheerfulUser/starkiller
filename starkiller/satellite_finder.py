@@ -463,9 +463,24 @@ class sat_killer():
             #* uses peakWidth as FWHM of peaks 
             pPrime , _ = find_peaks(ofInterest, height=mean + 5*sig, distance=peakWidth) 
     
-            pPrime += minVal #gets into correct 0 for coords
+            minMed = np.nanmin(ofInterest)
+            sideshift = 10
+            oiLen = len(ofInterest)
+            toDrop = []
+            # print("any to drop?")
+            for i, p in enumerate(pPrime):
+                lowShift = p-sideshift
+                highShift = p+sideshift
+                if lowShift<0 or highShift >=oiLen:
+                    # print(f"Should drop {p} at {i}, out of range")
+                    toDrop.append(i) #as outside of the image 
+                elif int(ofInterest[p-sideshift]) ==minMed or int(ofInterest[p+sideshift]) ==minMed:
+                    # print(f"Should drop {p} at {i}, too small")
+                    toDrop.append(i)
 
-            #push streak +/- 10, see if avg = 0. 
+            pPrime = np.delete(np.array(pPrime), toDrop)
+
+            pPrime += minVal #gets into correct 0 for coords
 
 
             newIntercepts = ((pPrime-offset) / np.cos(theta))
