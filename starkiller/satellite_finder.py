@@ -408,11 +408,18 @@ class sat_killer():
             saving: bool optional
                 If the figures should be saved
         """
-        print(f"Scanning file {self.savename}")
+
         oldStreakCoefs = self.streak_coef
         xLen = self.image.shape[1]
-
+        if len(oldStreakCoefs) == 0:
+            #don't need to scan if there is nothing there.
+            return
+        
+        print(f"Scanning file {self.savename}")
         print(f"Old streak coefiecents are: \n     {oldStreakCoefs}")
+
+       
+
         newStreakCoefs = []
         
         for sNum,streak_coef in enumerate(oldStreakCoefs):
@@ -458,6 +465,9 @@ class sat_killer():
     
             pPrime += minVal #gets into correct 0 for coords
 
+            #push streak +/- 10, see if avg = 0. 
+
+
             newIntercepts = ((pPrime-offset) / np.cos(theta))
             print(f"Streak {streak_coef} rotation and scan complete. \nFound {newIntercepts} as new Intercepts for the gradient {m}")
             
@@ -492,14 +502,17 @@ class sat_killer():
                     fig4.savefig(f"{self.savename}_MedPeakFound{sNum}.png")
 
         newStreakCoefs = np.array(newStreakCoefs)
-        duplicates = []
-        #* This gets some of the double ups from lines being not joined properly. 
-        for i, c in enumerate(newStreakCoefs[:,1]):
-            for j, c2 in enumerate(newStreakCoefs[:,1]):
-                if np.abs(c-c2) < peakWidth and i>j:
-                    duplicates.append(i) 
 
-        newStreakCoefs = np.delete(newStreakCoefs, duplicates, axis=0) #removes doubleups
+
+        if len(newStreakCoefs.shape) >1: #So single streaks aren't indexed wrong.
+            duplicates = []
+            #* This gets some of the double ups from lines being not joined properly. 
+            for i, c in enumerate(newStreakCoefs[:,1]):
+                for j, c2 in enumerate(newStreakCoefs[:,1]):
+                    if np.abs(c-c2) < peakWidth and i>j:
+                        duplicates.append(i) 
+
+            newStreakCoefs = np.delete(newStreakCoefs, duplicates, axis=0) #removes doubleups
 
         if plotting:
             fig, ax = plt.subplots(figsize=(10,10))
@@ -545,7 +558,7 @@ class sat_killer():
         if len(self.lines) > 1:
             self._match_lines(close=5,minlines=0)
             self._match_lines(close=60,minlines=1)
-            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5)
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=True, plotting=True)
             self.__lc_variation_test()
             self.__lc_stars_vetting()
             if len(self.streak_coef) > 0:
