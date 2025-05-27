@@ -388,6 +388,35 @@ class sat_killer():
             self.plot_spatial_specs()
 
 
+    def streak_in_image_dims(self, reqLenIn:int=10):
+        """
+        checks to see if the streak in inside the the image dimensions
+
+        Inputs:
+        -------
+            reqLenIn: int, optional
+                the number of points of the streak inside the image, default 10. Its a magic number 
+        """
+        oldCoefs = self.streak_coef
+        toDrop = []
+        if len(oldCoefs)>0:
+            for i, coef in enumerate(oldCoefs):
+                shape = self.image.shape
+                xs = np.linspace(0,shape[0],4*shape[0])
+                ys = coef[0]*xs +coef[1]
+                
+                inFrame = ys[np.nonzero((ys>=0) & (ys<=shape[1]))] #making sure that the line detected is actually in the image
+                if len(inFrame)<reqLenIn: 
+                    #TODO remove steak
+                    toDrop.append(i)
+                    print(f"Should remove {coef} as it isn't in the frame\n")
+        
+        newCoefs = np.delete(oldCoefs, toDrop, axis=0)
+        self.streak_coef = newCoefs
+    
+        return "Done"
+
+
     def scan_for_parallel_streaks(self, interestWidth:int,peakWidth:int = 1, plotting:bool=False, diagnosing:bool= False, saving:bool=False):
         """Rotates and Scans horizontally for streaks (ble61)
         Inputs:
@@ -464,7 +493,7 @@ class sat_killer():
             pPrime , _ = find_peaks(ofInterest, height=mean + 5*sig, distance=peakWidth) 
     
             minMed = np.nanmin(ofInterest)
-            sideshift = 10
+            sideshift = 10 #*Magic number
             oiLen = len(ofInterest)
             toDrop = []
             # print("any to drop?")
@@ -559,7 +588,10 @@ class sat_killer():
 
         print(f"\n The New Streak Coefs are \n {newStreakCoefs}\n")
         self.streak_coef = newStreakCoefs #* set class variable to what was found inside method, as is standard here
-        if len(newStreakCoefs) > 0:  
+        
+        self.streak_in_image_dims()
+
+        if len(self.streak_coef) > 0:  
             #This was at the end of matchlines, when new coeffs were found, so doing it again here for consistency.
             #TODO Check if it needs to be done again.
             self._find_center() 
