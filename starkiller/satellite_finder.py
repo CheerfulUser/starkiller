@@ -502,7 +502,9 @@ class sat_killer():
             toDrop = []
             # print("any to drop?")
             for i, p in enumerate(pPrime):  #! can go wrong, if Image is angled, and streak close to corner. Cause the med value of the nearby row will be at min, due to >1/2 of px being not part of the frame.  
-            #* Sort of fixed with sig vals, but lc variation drops them still. 
+            #* Sort of fixed with sig vals
+            #! but lc variation drops them still. 
+            #* Have now fixed the lc variation.
                 lowShift = p-sideshift
                 highShift = p+sideshift
                 if lowShift<0 or highShift >=oiLen:
