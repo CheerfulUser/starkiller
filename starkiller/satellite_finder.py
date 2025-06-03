@@ -209,7 +209,10 @@ class sat_killer():
             yy = xx*c[0] + c[1]
             yy = (yy+0.5).astype(int)
             ind = (yy > 0) & (yy < self.image.shape[0])
-            lc = self.image[yy[ind],xx[ind]]
+            lc = self.image[yy[ind],xx[ind]] #! if image angled, the streak can be to short, and therefore the median is low, but a largeish fraction is still streak (ble) 
+
+            lc = lc[np.where(lc!=2)]  #*This should fix the above, as 2 is never (well, it shouldn't be) anywhere in frame (ble)
+
             mean, med, std = sigma_clipped_stats(lc)
             if std == 0:
                 std = 1
@@ -217,6 +220,7 @@ class sat_killer():
                 std = 30
             var = abs(lc - med)
             frac = np.sum(var >= 3*std) / len(lc)
+            print(f"frac is {frac}")
             if frac < variation_frac:
                 good += [True]
             else:
@@ -266,7 +270,7 @@ class sat_killer():
         for c in self.streak_coef:
             xx = np.arange(0,self.image.shape[1],0.5)
             yy = xx*c[0] + c[1]
-            ind = (yy > 0) & (yy < self.image.shape[0])
+            ind = (yy >= 0) & (yy <= self.image.shape[0]) #*ble added = to inequality, so lines on edges were detected. They should get droped later. 
             yy = yy[ind]; xx = xx[ind]
             centers += [[np.nanmean(xx),np.nanmean(yy)]]
             lengths += [np.sqrt((xx[0]-xx[-1])**2 + (yy[0] - yy[-1])**2)]
@@ -390,7 +394,7 @@ class sat_killer():
 
     def streak_in_image_dims(self, reqLenIn:int=10):
         """
-        checks to see if the streak in inside the the image dimensions
+        checks to see if the streak in inside the the image dimensions (ble)
 
         Inputs:
         -------
@@ -401,11 +405,11 @@ class sat_killer():
         toDrop = []
         if len(oldCoefs)>0:
             for i, coef in enumerate(oldCoefs):
-                shape = self.image.shape
-                xs = np.linspace(0,shape[0],4*shape[0])
+                shape = self.image.shape #! Had shapes the wrong way around. 1 is x, 0 is y. 
+                xs = np.linspace(0,shape[1],4*shape[0])
                 ys = coef[0]*xs +coef[1]
                 
-                inFrame = ys[np.nonzero((ys>=0) & (ys<=shape[1]))] #making sure that the line detected is actually in the image
+                inFrame = ys[np.nonzero((ys>=0) & (ys<=shape[0]))] #making sure that the line detected is actually in the image
                 if len(inFrame)<reqLenIn: 
                     #TODO remove steak
                     toDrop.append(i)
@@ -413,12 +417,11 @@ class sat_killer():
         
         newCoefs = np.delete(oldCoefs, toDrop, axis=0)
         self.streak_coef = newCoefs
-    
-        return "Done"
+
 
 
     def scan_for_parallel_streaks(self, interestWidth:int,peakWidth:int = 1, plotting:bool=False, diagnosing:bool= False, saving:bool=False):
-        """Rotates and Scans horizontally for streaks (ble61)
+        """Rotates and Scans horizontally for streaks (ble)
         Inputs:
         -------
             interestWidth: int, required
@@ -471,7 +474,7 @@ class sat_killer():
             
             #Scanning along rows
             medVals = np.nanmedian(rotIm, axis=1)
-            
+            sigVals = np.nanstd(rotIm, axis=1)
             #Stats for whole axis
             mean, med, sig = sigma_clipped_stats(medVals)
         
@@ -487,23 +490,33 @@ class sat_killer():
                 maxVal = len(medVals)-1
 
             #only looking close to streak
-            ofInterest = medVals[minVal:maxVal]
+            medOfInterest = medVals[minVal:maxVal]
+            sigOfInterest = sigVals[minVal:maxVal]
 
             #* uses peakWidth as FWHM of peaks 
-            pPrime , _ = find_peaks(ofInterest, height=mean + 5*sig, distance=peakWidth) 
+            pPrime , _ = find_peaks(medOfInterest, height=mean + 5*sig, distance=peakWidth) 
     
-            minMed = np.nanmin(ofInterest)
+            minMed = np.nanmin(medOfInterest)
             sideshift = 10 #*Magic number
-            oiLen = len(ofInterest)
+            oiLen = len(medOfInterest)
             toDrop = []
             # print("any to drop?")
-            for i, p in enumerate(pPrime):
+            for i, p in enumerate(pPrime):  #! can go wrong, if Image is angled, and streak close to corner. Cause the med value of the nearby row will be at min, due to >1/2 of px being not part of the frame.  
+            #* Sort of fixed with sig vals, but lc variation drops them still. 
                 lowShift = p-sideshift
                 highShift = p+sideshift
                 if lowShift<0 or highShift >=oiLen:
                     # print(f"Should drop {p} at {i}, out of range")
                     toDrop.append(i) #as outside of the image 
-                elif int(ofInterest[p-sideshift]) ==minMed or int(ofInterest[p+sideshift]) ==minMed:
+                    continue
+                
+                downMed = int(medOfInterest[p-sideshift])
+                downSig = int(round(sigOfInterest[p-sideshift],0))
+
+                upMed = int(medOfInterest[p+sideshift])
+                upSig = int(round(sigOfInterest[p+sideshift]))
+
+                if (downMed ==minMed and downSig == 0) or (upMed==minMed and upSig==0):
                     # print(f"Should drop {p} at {i}, too small")
                     toDrop.append(i)
 
@@ -533,8 +546,8 @@ class sat_killer():
                 ax3.legend()
 
                 fig4, ax4 = plt.subplots(figsize=(12,6))
-                ax4.plot(np.arange(len(ofInterest))-cPrime+minVal, ofInterest)
-                ax4.vlines([pPrime-cPrime], 0,np.max(ofInterest)+10, colors="g", label="Found Peaks")
+                ax4.plot(np.arange(len(medOfInterest))-cPrime+minVal, medOfInterest)
+                ax4.vlines([pPrime-cPrime], 0,np.max(medOfInterest)+10, colors="g", label="Found Peaks")
                 ax4.axvline(0, c="k", label="Hough Transfrom Detection")
                 ax4.set(xlabel="Rows From Detection", ylabel ="Median Intensity")
                 ax4.legend()
@@ -603,9 +616,9 @@ class sat_killer():
         self._edges()
         self._lines()
         if len(self.lines) > 1:
-            self._match_lines(close=5,minlines=0)
-            self._match_lines(close=60,minlines=1)
-            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=False)
+            self._match_lines(close=5,minlines=0)            
+            self._match_lines(close=60,minlines=1)           
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=True)            
             self.__lc_variation_test()
             self.__lc_stars_vetting()
             if len(self.streak_coef) > 0:
