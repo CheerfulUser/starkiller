@@ -621,8 +621,8 @@ class sat_killer():
             self._match_lines(close=5,minlines=0)            
             self._match_lines(close=60,minlines=1)
         if len(self.streak_coef) > 0:           
-            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=True)            
-            self.__lc_variation_test()
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=False)            
+            self.__lc_variation_test(variation_frac=0.3) #trial with higher frac
             self.__lc_stars_vetting()
             if len(self.streak_coef) > 0:
                 self.make_mask()
