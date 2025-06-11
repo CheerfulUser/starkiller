@@ -203,6 +203,19 @@ class sat_killer():
             self._find_center()
 
     def __lc_variation_test(self,variation_frac=0.2):
+        """
+        Checks for variation along the streak, and requires it to be lower than a bound (variation_frac) (rri/ble)
+
+        Parameters
+        ----------
+            variation_frac: float, optional
+                The maximum allowed variation along a candiate streak. Should be 0<variation_frac<1, default 0.2
+
+        Returns
+        -------
+            None, but changes self.streak_coef based on the results of the check  
+        """
+        
         good = []
         for c in self.streak_coef:
             xx = np.arange(0,self.image.shape[1],1)
@@ -220,7 +233,7 @@ class sat_killer():
                 std = 30
             var = abs(lc - med)
             frac = np.sum(var >= 3*std) / len(lc)
-            print(f"frac is {frac}")
+            #// print(f"frac is {frac}")  
             if frac < variation_frac:
                 good += [True]
             else:
@@ -263,6 +276,8 @@ class sat_killer():
         plt.ylim(-0.5,self.image.shape[1]+0.5)
         
     def _find_center(self):
+        """Finds the centers of the detected streaks (rri/ble)"""
+        
         centers = []
         lengths = []
         angles = []
@@ -394,12 +409,12 @@ class sat_killer():
 
     def streak_in_image_dims(self, reqLenIn:int=10):
         """
-        checks to see if the streak in inside the the image dimensions (ble)
+        Checks to see if the streak in inside the the image dimensions (ble)
 
-        Inputs:
-        -------
+        Parameters
+        ----------
             reqLenIn: int, optional
-                the number of points of the streak inside the image, default 10. Its a magic number 
+                The number of points of the streak inside the image, default 10. Its a magic number 
         """
         oldCoefs = self.streak_coef
         toDrop = []
@@ -422,10 +437,11 @@ class sat_killer():
 
     def scan_for_parallel_streaks(self, interestWidth:int,peakWidth:int = 1, plotting:bool=False, diagnosing:bool= False, saving:bool=False):
         """Rotates and Scans horizontally for streaks (ble)
-        Inputs:
-        -------
+        
+        Parameters
+        ----------
             interestWidth: int, required
-                The search width around a Hough transform found peak to scan for other peaks. 
+            The search width around a Hough transform found peak to scan for other peaks. 
 
             peakWidth: int, optional
                 The FWHM of the assumed Gaussian streaks. It is to be used to check the distance between peaks.
@@ -439,6 +455,10 @@ class sat_killer():
             
             saving: bool optional
                 If the figures should be saved
+        
+        Returns
+        -------
+            None, but changes self.streak_coef
         """
 
         oldStreakCoefs = self.streak_coef
@@ -504,7 +524,7 @@ class sat_killer():
             for i, p in enumerate(pPrime):  #! can go wrong, if Image is angled, and streak close to corner. Cause the med value of the nearby row will be at min, due to >1/2 of px being not part of the frame.  
             #* Sort of fixed with sig vals
             #! but lc variation drops them still. 
-            #* Have now fixed the lc variation.
+            #* Have now fixed the lc variation. A higher Variation fraction allow more satellites through (also more junk, but there was always going to have to be validation by eye)
                 lowShift = p-sideshift
                 highShift = p+sideshift
                 if lowShift<0 or highShift >=oiLen:
@@ -612,7 +632,20 @@ class sat_killer():
             self._find_center() 
 
 
-    def __detection_funcs(self,threshold):
+    def __detection_funcs(self,threshold:float):
+        """
+        Calls the functions needed for satellite detection in order. The image thershold is set, then the image is dilated to this threshold. Edges and lines are detected with Canny detection and a Hough transform. These lines are then matched if there are multiple of them. If there have been streaks detected, the image is scanned for parallel streaks that have been grouped together as one, and these streaks are then validated for low variation and stellar strings. Streaks that survive these checks are then plotted onto the image. (rri/ble)
+        
+        Parameters
+        ----------
+            threshold: float, required 
+                This value is used as the number of standard deviations (sigma) that is added to the mean of the image. This sum is then set as self.threshold 
+        
+        Returns
+        -------
+            None, but sets many self. variable as it goes, importantly self.streak_coef (2,n ndarray[Floats]) and self.satellite (bool)
+        """
+        
         self._set_threshold(threshold)
         self._dilate()
         self._edges()
@@ -622,7 +655,8 @@ class sat_killer():
             self._match_lines(close=60,minlines=1)
         if len(self.streak_coef) > 0:           
             self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=False)            
-            self.__lc_variation_test(variation_frac=0.3) #trial with higher frac
+            self.__lc_variation_test(variation_frac=0.3) #* trial with higher frac was sucessful
+            #* now consistent. No extra _tpl combined quicklooks without the same streak in a _pst single cube one
             self.__lc_stars_vetting()
             if len(self.streak_coef) > 0:
                 self.make_mask()
@@ -633,7 +667,25 @@ class sat_killer():
 
 
 
-    def quick_detection(self,image,threshold=3,savename=None):
+    def quick_detection(self,image,threshold:float=3,savename:str|None=None):
+        """
+        Runs the satellite detection on just an image, without needing a full datacube. If no satellites are detected, it runs again at a higher threshold (rri)
+
+        Parameters
+        ----------
+            image: Arraylike, required
+                The image that is potentially contaminated with satellite streaks
+            
+            threshold: float, optional
+                This value is used as the number of standard deviations (sigma) that is added to the mean of the image. This sum is then set as self.threshold. Default is 3 
+            
+            savename str | None, optional
+                The path/to/file/name to save any plots made during the run. Default is None, needs to be given if saving figures is desired.
+        
+        Returns
+        -------
+            None
+        """
         self.image = image
         self.savename = savename
         self.__detection_funcs(threshold)
