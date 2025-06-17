@@ -233,7 +233,7 @@ class sat_killer():
                 std = 30
             var = abs(lc - med)
             frac = np.sum(var >= 3*std) / len(lc)
-            #// print(f"frac is {frac}")  
+            print(f"frac is {frac}")  
             if frac < variation_frac:
                 good += [True]
             else:
@@ -248,7 +248,7 @@ class sat_killer():
             yy = (yy+0.5).astype(int)
             ind = (yy > 0) & (yy < self.image.shape[0])
             lc = self.image[yy[ind],xx[ind]]
-            
+            lc = lc[np.where(lc!=2)] #* Same as in __lc_varitaion_test()  (ble)
             mean, med, std = sigma_clipped_stats(lc)
             pmean, pmed, pstd = sigma_clipped_stats(self.image,maxiters=20)
             cond = med > pmed + sigma*pstd
@@ -493,7 +493,8 @@ class sat_killer():
             cPrime = int(round(c *np.cos(theta) +offset,0))
             
             #Scanning along rows
-            medVals = np.nanmedian(rotIm, axis=1)
+            medVals = np.nanmedian(np.where(rotIm>2, rotIm, np.nan), axis=1) #! only taking values in field (2 is off sky black in quicklooks.)
+
             sigVals = np.nanstd(rotIm, axis=1)
             #Stats for whole axis
             mean, med, sig = sigma_clipped_stats(medVals)
@@ -654,7 +655,7 @@ class sat_killer():
             self._match_lines(close=5,minlines=0)            
             self._match_lines(close=60,minlines=1)
         if len(self.streak_coef) > 0:           
-            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=False)            
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=True)            
             self.__lc_variation_test(variation_frac=0.3) #* trial with higher frac was sucessful
             #* now consistent. No extra _tpl combined quicklooks without the same streak in a _pst single cube one
             self.__lc_stars_vetting()
