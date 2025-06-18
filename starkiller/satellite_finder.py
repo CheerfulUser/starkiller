@@ -27,10 +27,13 @@ class sat_killer():
 
         if run:
             self._make_image()
+            #* (ble) Looks like these are also done in __detection_funcs()
             self._set_threshold(sat_sigma)
             self._dilate()
             self._edges()
             self._lines()
+            #* ^ 
+
             self.__detection_funcs(sat_sigma)
             if len(self.streak_coef) > 0:
                 self.make_mask()
@@ -40,9 +43,24 @@ class sat_killer():
                     self._fit_spec()
 
     def _make_image(self):
-        image = np.nanmedian(self.cube,axis=0)
-        self.image = image - np.nanmedian(image)
-    
+        #* how rri did it, which was struggling to catch streaks
+        # image = np.nanmedian(self.cube,axis=0)
+        # self.image = image - np.nanmedian(image)
+
+        #*ble, to make it more like a quicklook, which we know works for streak detection
+        image = np.nanmedian(self.cube, axis = 0)
+
+        #*Sets `quicklook-like` bounds, and applies them to the image
+        vmin = np.nanpercentile(image, 1).round(2) 
+        vmax = np.nanpercentile(image, 98).round(2)
+        image[image>=vmax] = vmax
+        image[image<=vmin] = vmin
+
+        image = image-vmin #*should make lowest Val 0
+        image = 255*(image/(vmax-vmin)) #*should make the range (0,255), like an 8-bit image
+        image = np.where(np.isfinite(image), image, 0) #*turns any nans into 0s, to keep image finite everywhere
+
+        self.image = image
     
     def _set_threshold(self,sigma):
         mean, med, std = sigma_clipped_stats(self.image)
@@ -213,7 +231,7 @@ class sat_killer():
 
         Returns
         -------
-            None, but changes self.streak_coef based on the results of the check  
+            Nothing, but changes self.streak_coef based on the results of the check  
         """
         
         good = []
@@ -233,7 +251,7 @@ class sat_killer():
                 std = 30
             var = abs(lc - med)
             frac = np.sum(var >= 3*std) / len(lc)
-            print(f"frac is {frac}")  
+            # print(f"frac is {frac}")  
             if frac < variation_frac:
                 good += [True]
             else:
@@ -241,6 +259,20 @@ class sat_killer():
         self.streak_coef = self.streak_coef[good]
 
     def __lc_stars_vetting(self,sigma=2):
+        """
+        Checks for strings of stars. The streaks median value must be more than the image median plus sigma* the image std. (rri/ble)
+
+            Parameters
+            ----------
+
+            sigma: float, optional
+                The number of standard deviations above the median the streak should satisfy. Default 2. 
+
+            Returns
+            -------
+                Nothing, but modifies self.streak_coef
+        """
+        
         good = []
         for c in self.streak_coef:
             xx = np.arange(0,self.image.shape[1],1)
@@ -273,7 +305,7 @@ class sat_killer():
             plt.plot(xx,yy,f'C{counter}--',label=f'Sat {counter}')
             counter += 1
         plt.legend()
-        plt.ylim(-0.5,self.image.shape[1]+0.5)
+        plt.ylim(-0.5,self.image.shape[0]+0.5) #*y is 0 in shape (ble)
         
     def _find_center(self):
         """Finds the centers of the detected streaks (rri/ble)"""
@@ -458,7 +490,7 @@ class sat_killer():
         
         Returns
         -------
-            None, but changes self.streak_coef
+            Nothing, but changes self.streak_coef
         """
 
         oldStreakCoefs = self.streak_coef
@@ -483,7 +515,7 @@ class sat_killer():
             #rotate image
             rotIm = ndimage.rotate(self.image, np.degrees(theta), cval=np.nan)
             rotIm = rotIm.astype(np.float64)
-            rotIm[rotIm==0] = np.nan
+            rotIm[rotIm<=2] = np.nan
             
             #Project found streak to rotated axis
             offset = np.sin(theta)*xLen
@@ -493,7 +525,9 @@ class sat_killer():
             cPrime = int(round(c *np.cos(theta) +offset,0))
             
             #Scanning along rows
-            medVals = np.nanmedian(np.where(rotIm>2, rotIm, np.nan), axis=1) #! only taking values in field (2 is off sky black in quicklooks.)
+            medVals = np.nanmedian(np.where(rotIm>2, rotIm, np.nan), axis=1) #* now only taking values in field (2 is off-sky black in quicklooks.)
+
+
 
             sigVals = np.nanstd(rotIm, axis=1)
             #Stats for whole axis
@@ -516,7 +550,7 @@ class sat_killer():
 
             #* uses peakWidth as FWHM of peaks 
             pPrime , _ = find_peaks(medOfInterest, height=mean + 5*sig, distance=peakWidth) 
-    
+
             minMed = np.nanmin(medOfInterest)
             sideshift = 10 #*Magic number
             oiLen = len(medOfInterest)
@@ -533,14 +567,24 @@ class sat_killer():
                     toDrop.append(i) #as outside of the image 
                     continue
                 
-                downMed = int(medOfInterest[p-sideshift])
-                downSig = int(round(sigOfInterest[p-sideshift],0))
+                downMed = medOfInterest[p-sideshift]
+                downSig = round(sigOfInterest[p-sideshift],0)
 
-                upMed = int(medOfInterest[p+sideshift])
-                upSig = int(round(sigOfInterest[p+sideshift]))
+                upMed = medOfInterest[p+sideshift]
+                upSig = round(sigOfInterest[p+sideshift])
 
-                if (downMed ==minMed and downSig == 0) or (upMed==minMed and upSig==0):
-                    # print(f"Should drop {p} at {i}, too small")
+                if np.isfinite(upMed) and np.isfinite(downMed):
+                    #* This does still need doing, as strips can be wide enough
+                    downMed = int(medOfInterest[p-sideshift])
+                    downSig = int(round(sigOfInterest[p-sideshift],0))
+
+                    upMed = int(medOfInterest[p+sideshift])
+                    upSig = int(round(sigOfInterest[p+sideshift]))
+
+                    if (downMed ==minMed and downSig == 0) or (upMed==minMed and upSig==0):
+                        # print(f"Should drop {p} at {i}, too small")
+                        toDrop.append(i)
+                else:
                     toDrop.append(i)
 
             pPrime = np.delete(np.array(pPrime), toDrop)
@@ -563,14 +607,14 @@ class sat_killer():
                 ax3.plot(medVals)
                 # ax2.set(xlim=(cPrime-60,cPrime +60))
                 ax3.axhline(mean + 5*sig, label=f"Detection lower limit, $\mu + 5\sigma$", ls=":", c="r")
-                ax3.vlines(np.round(oldStreakCoefs[:,1] *np.cos(theta) +offset,0).astype(int),0,np.max(medVals)+10, label="Detected Satellites", colors="k")
+                ax3.vlines(np.round(oldStreakCoefs[:,1] *np.cos(theta) +offset,0).astype(int),0,np.nanmax(medVals)+10, label="Detected Satellites", colors="k")
                 # ax3.vlines(pPrime,0,255)
                 ax3.set(xlabel="Row", ylabel ="Median Intensity")
                 ax3.legend()
 
                 fig4, ax4 = plt.subplots(figsize=(12,6))
                 ax4.plot(np.arange(len(medOfInterest))-cPrime+minVal, medOfInterest)
-                ax4.vlines([pPrime-cPrime], 0,np.max(medOfInterest)+10, colors="g", label="Found Peaks")
+                ax4.vlines([pPrime-cPrime], 0,np.nanmax(medOfInterest)+10, colors="g", label="Found Peaks")
                 ax4.axvline(0, c="k", label="Hough Transfrom Detection")
                 ax4.set(xlabel="Rows From Detection", ylabel ="Median Intensity")
                 ax4.legend()
@@ -644,7 +688,7 @@ class sat_killer():
         
         Returns
         -------
-            None, but sets many self. variable as it goes, importantly self.streak_coef (2,n ndarray[Floats]) and self.satellite (bool)
+            Nothing, but sets many self. variable as it goes, importantly self.streak_coef (2,n ndarray[Floats]) and self.satellite (bool)
         """
         
         self._set_threshold(threshold)
@@ -655,10 +699,11 @@ class sat_killer():
             self._match_lines(close=5,minlines=0)            
             self._match_lines(close=60,minlines=1)
         if len(self.streak_coef) > 0:           
-            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=True)            
+            self.scan_for_parallel_streaks(interestWidth=100, peakWidth=5, diagnosing=False, plotting=False)            
             self.__lc_variation_test(variation_frac=0.3) #* trial with higher frac was sucessful
             #* now consistent. No extra _tpl combined quicklooks without the same streak in a _pst single cube one
-            self.__lc_stars_vetting()
+            self.__lc_stars_vetting()  #! would throw out sats 
+             #*Had to change this to
             if len(self.streak_coef) > 0:
                 self.make_mask()
                 self.plot_lines()
@@ -685,7 +730,7 @@ class sat_killer():
         
         Returns
         -------
-            None
+            Nothing
         """
         self.image = image
         self.savename = savename
