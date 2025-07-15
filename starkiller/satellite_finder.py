@@ -64,7 +64,10 @@ class sat_killer():
     
     def _set_threshold(self,sigma):
         mean, med, std = sigma_clipped_stats(self.image)
-        self.threshold = mean + sigma*std
+        self.threshold = mean + sigma*std  #! This can easily be > max of image
+        #! with default sat_sigma = 10, a std of ~20 can blow past the 255 upper bound with a modest mean around 50.
+        #! If std is >25, it is going to zero the gray image out. 
+        #! (ble)   
 
     def _detected(self):
         if len(self.streak_coef) > 0:
@@ -85,7 +88,7 @@ class sat_killer():
         dilated = cv2.dilate(arr, kernel, iterations=1)
         dilated[dilated<10]  = 0
         # set all non-zero values in the dilated array that are not connected to other non-zero values to zero
-        arr[(arr != 0) & (dilated == 0)] = 0
+        arr[(arr != 0) & (dilated == 0)] = 0 #? This is never used? (ble)
 
         d = (dilated > 0) * 1
         self.gray = (d*255/np.max(d)).astype('uint8')
