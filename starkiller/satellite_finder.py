@@ -776,7 +776,8 @@ class sat_killer():
     def save_specs(self,savepath='.',spatial=False):
         for i in range(len(self.sat_fluxes)):
             save = np.array([self.wavelength,self.sat_fluxes[i]]).T
-            np.save(savepath + f'sat_{i+1}.png',save)
+            # np.save(savepath + f'sat_{i+1}.png',save) #* Doesn't need the .png on the end
+            np.save(savepath + f'sat_{i+1}',save) 
 
 
 
