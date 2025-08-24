@@ -285,7 +285,9 @@ def get_star_cuts(x_length,y_length,image,cat,norm=False):
         
         my,mx = np.where(np.nanmax(c) == c)
         star_cuts += [c]
-        if ((mx > 5) & (mx < c.shape[1]-5) & (my > 5) & (my < c.shape[0]-5)).any():
+        nancheck = np.sum(np.isnan(c))
+        pixs = c.shape[0] * c.shape[1]
+        if ((mx > 5) & (mx < c.shape[1]-5) & (my > 5) & (my < c.shape[0]-5)).any() & (nancheck/pixs<0.2):
             good += [True]
         else:
             good += [False]
@@ -340,7 +342,7 @@ def replace_cube(cube,cut,x_length,y_length,cat):
     return replace
 
 
-def psf_spec(cube,psf,data_psf=None,fitpos=True):
+def psf_spec(cube,psf,data_psf=None,fitpos=True,pos_bound=None):
     """
     Create a PSF and fit it to the input cube. Then calculate the flux of the source in the image.
 
@@ -379,12 +381,18 @@ def psf_spec(cube,psf,data_psf=None,fitpos=True):
     #             psf_profile='gaussian'+psf_tuning)
        
     l = psf.length
-    if l < 2:
-        r = 0.5
+    if pos_bound is None:
+        if l < 2:
+            r = 0.5
+        else:
+            r = 0.05 * l
+            if r > 2:
+                r = 2
+            else:
+                r = 1.5
     else:
-        r = 0.05 * l
-        if r > 2:
-            r = 2
+        r = pos_bound
+
     if fitpos:
         psf.fit_pos(np.nanmean(cube,axis=0),range=r)
         xoff = psf.source_x; yoff = psf.source_y

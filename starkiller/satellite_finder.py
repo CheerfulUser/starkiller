@@ -90,6 +90,8 @@ class sat_killer():
             for i in range(len(lines)):
                 line = lines[i]
                 x1, y1, x2, y2 = line[0]
+                if x1 == x2:
+                    x2 += 0.1
                 # calculate the angle of the line
                 angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
                 #if abs(angle) < 85:
