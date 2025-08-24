@@ -69,10 +69,15 @@ class cube_simulator():
 
 
         """
-        self.xdim = cube.shape[2] + 2*padding
-        self.ydim = cube.shape[1] + 2*padding
+        if len(cube.shape) == 3:
+            self.xdim = cube.shape[2] + 2*padding
+            self.ydim = cube.shape[1] + 2*padding
+        else:
+            self.xdim = cube.shape[1] + 2*padding
+            self.ydim = cube.shape[0] + 2*padding
         self.sim = np.zeros_like(cube)
         self.weights = np.zeros_like(cube)
+
         self.psf = psf
         self.cat = catalog
         self.repFact = repFact
@@ -84,7 +89,8 @@ class cube_simulator():
             print('Using the data PSF')
 
         self._make_super_sample()
-        self._create_seeds()
+        if self.cat is not None:
+            self._create_seeds()
         if self.satellite is not None:
             self._create_satellite_seeds()
     
