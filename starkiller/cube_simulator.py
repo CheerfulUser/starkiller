@@ -69,22 +69,30 @@ class cube_simulator():
 
 
         """
-        self.xdim = cube.shape[2] + 2*padding
-        self.ydim = cube.shape[1] + 2*padding
+        if len(cube.shape) == 3:
+            self.xdim = cube.shape[2] + 2*padding
+            self.ydim = cube.shape[1] + 2*padding
+        else:
+            self.xdim = cube.shape[1] + 2*padding
+            self.ydim = cube.shape[0] + 2*padding
         self.sim = np.zeros_like(cube)
         self.weights = np.zeros_like(cube)
+
         self.psf = psf
         self.cat = catalog
         self.repFact = repFact
         self.padding = padding
         self.satellite = satellite
 
+        self.all_psfs = None
+
         if datapsf:
             self.psf.longPSF = self.psf.data_PSF
             print('Using the data PSF')
 
         self._make_super_sample()
-        self._create_seeds()
+        if self.cat is not None:
+            self._create_seeds()
         if self.satellite is not None:
             self._create_satellite_seeds()
     
@@ -156,6 +164,13 @@ class cube_simulator():
         # remove buffer
         self.satellite_seeds = self.satellite_seeds[:,self.padding:-self.padding,self.padding:-self.padding]
 
+        if self.all_psfs is not None:
+            #*appends the sat psf seeds to the stellar ones if they exist
+            self.all_psfs = np.append(self.all_psfs, np.nansum(self.satellite_seeds, axis=0))
+        else:
+            #* just makes the sat ones. 
+            self.all_psfs = np.nansum(self.satellite_seeds, axis=0)
+
         
     def mag_image(self):
         """
@@ -167,7 +182,7 @@ class cube_simulator():
             image += self.seeds[i] * self.cat['counts'].iloc[i]
         self.image = image
     
-    def make_scene(self,flux):
+    def make_scene(self,flux, kill_stars:bool=True):
         """
         Creates the scene which consists of the simulated sources in the data cube.
 
@@ -176,9 +191,10 @@ class cube_simulator():
         flux : np.array
             Array of fluxes for each spectral dimension in the data cube.
         """
-        for i in range(len(flux)):
-            seed = self.seeds[i]
-            self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
+        if kill_stars:
+            for i in range(len(flux)):
+                seed = self.seeds[i]
+                self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
         if self.satellite is not None:
             for i in range(len(self.satellite_seeds)):
                 seed = self.satellite_seeds[i]

@@ -120,6 +120,8 @@ class sat_killer():
             for i in range(len(lines)):
                 line = lines[i]
                 x1, y1, x2, y2 = line[0]
+                if x1 == x2:
+                    x2 += 0.1
                 # calculate the angle of the line
                 angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
                 #if abs(angle) < 85:
@@ -380,11 +382,11 @@ class sat_killer():
         self.sat_psfs = []
         for i in range(self.sat_num):
             if 'gaussian' in self.star_psf.psf_profile:
-                self.sat_psfs += [create_psf(self.cut_dims[0,0]*2+1,self.cut_dims[0,1]*2+1,angle = self.angles[0],
-                                           length = self.lengths[0],stddev=self.star_psf.stddev)]
+                self.sat_psfs += [create_psf(self.cut_dims[i,0]*2+1,self.cut_dims[i,1]*2+1,angle = self.angles[i],
+                                           length = self.lengths[i],stddev=self.star_psf.stddev)]
             elif 'moffat' in self.star_psf.psf_profile:
-                self.sat_psfs += [create_psf(self.cut_dims[0,0]*2+1,self.cut_dims[0,1]*2+1,angle = self.angles[0],
-                                           length = self.lengths[0],alpha=self.star_psf.alpha,beta=self.star_psf.beta)]
+                self.sat_psfs += [create_psf(self.cut_dims[i,0]*2+1,self.cut_dims[i,1]*2+1,angle = self.angles[i],
+                                           length = self.lengths[i],alpha=self.star_psf.alpha,beta=self.star_psf.beta)]
         
             
             

@@ -29,7 +29,12 @@ from astroquery.vizier import Vizier
 from scipy.optimize import minimize
 import astropy.table as at
 
-from photutils import DAOStarFinder
+# change in photutils function locations
+try:
+	from photutils import DAOStarFinder
+except:
+	from photutils.detection import DAOStarFinder
+
 from astropy.stats import sigma_clipped_stats
 
 from scipy.interpolate import griddata
@@ -61,7 +66,7 @@ class starkiller():
 				 psf_profile='gaussian',wcs_correction=True,psf_align=True,
 				 psf_preference='data',plot=True,run=True,verbose=True,numcores=5,rerun_cal=False,
 				 calc_psf_only=False,flux_correction=True,wavelength_sol='air',
-				 show_specs=False,fuzzy=False,background=False,satellite=False,force_flux_correction=False):
+				 show_specs=False,fuzzy=False,background=False,satellite=False,kill_stars=True,force_flux_correction=False):
 		"""
 		Deploys the starkiller! Applying starkiller to an IFU data cube will determine the specral types of all sources, model the scene, and subtract the scene from the data.
 
@@ -157,6 +162,7 @@ class starkiller():
 		self._psf_align = psf_align
 		self.__download_cat = get_catalog
 		self._background = background
+		self._kill_stars = kill_stars
 
 		if (key_filter is None) & (catalog is None):
 			if get_catalog.lower() == 'gaia':
@@ -217,6 +223,7 @@ class starkiller():
 		self.lam *= 1e10 # convert to Angst
 
 		self.image = np.nanmean(self.cube,axis=0)
+		self.white = np.nansum(self.cube,axis=0)
 		#self.image[np.isnan(self.image)] = 0
 		self.bright_mask = self.image > np.nanpercentile(self.image,90)
 		self.image = self.image - np.nanmedian(self.image[~self.bright_mask])
@@ -993,8 +1000,8 @@ class starkiller():
 		xx,yy = transform_coords(self.cat.x.values,self.cat.y.values,res.x,self.image)
 		self.cat['x'] = xx
 		self.cat['y'] = yy
-		self.cat['xint'] = (self.cat['x'].values + 0.5).astype(int)
-		self.cat['yint'] = (self.cat['y'].values + 0.5).astype(int)
+		self.cat['xint'] = np.round(self.cat['x'].values,0).astype(int)
+		self.cat['yint'] = np.round(self.cat['y'].values,0).astype(int)
 
 		if plot:
 			plt.figure()
@@ -1300,7 +1307,7 @@ class starkiller():
 				print('!!! No satellite detected !!!')
 				self._search_satellite = False
 
-	def force_spec(self,x,y,fitpos=True,cube=None):
+	def force_spec(self,x,y,fitpos=True,cube=None,plot=False):
 		"""
 		Obtain a spectrum at the specified location.
 
@@ -1330,6 +1337,15 @@ class starkiller():
 		cat_off['spec'] = 0
 		for i in range(len(specs)):
 			cat_off['spec'].iloc[i] = specs[i]
+		if plot:
+			plt.xlim(min(specs[i].wave)*0.9,max(specs[i].wave)*1.1)
+			y_low = (np.nanmin(smoothed.flux)-ymarg) * 1e16
+			y_high = (np.nanmax(smoothed.flux)+ymarg) * 1e16
+			plt.ylim(y_low,y_high)
+			plt.ylabel(r'Flux $\left[\rm \times10^{-16}\; erg/s/cm^2/\AA\right]$')
+			plt.xlabel(r'Wavelength ($\rm \AA$)')
+			plt.legend(loc='upper left')
+			plt.savefig(f'{self.savepath}spec_figs/{self.cat.id.iloc[i]}.png',dpi=300)
 		return cat_off
 
 	def make_scene(self):
@@ -1345,14 +1361,16 @@ class starkiller():
 		else:
 			scene = cube_simulator(self.cube,psf=self.psf,catalog=self.cat,datapsf=data)
 		flux = []
-		for i in range(len(self.cat)):
-			#f = downsample_spec(self.models[i],self.lam)
-			f = self.models[i].sample(self.lam)
-			flux += [f*1e20 / self.flux_corr]
-		flux = np.array(flux)
-		scene.make_scene(flux)
-		self.scene = scene
+		if self._kill_stars:
+			for i in range(len(self.cat)):
+				#f = downsample_spec(self.models[i],self.lam)
+				f = self.models[i].sample(self.lam)
+				flux += [f*1e20 / self.flux_corr]
 
+		flux = np.array(flux)
+		scene.make_scene(flux, kill_stars = self._kill_stars)
+		self.scene = scene
+ 
 	def calc_difference(self):
 		"""
 		Calculate the difference between the scene and the cube. Adds in the diff variable.
@@ -1375,8 +1393,13 @@ class starkiller():
 		vmin = np.nanpercentile(image,16)
 		vmax = np.nanpercentile(image,95)
 
-		x = self.cat.xint + self.cat.x_offset
-		y = self.cat.yint + self.cat.y_offset
+		if self._kill_stars:
+			x = self.cat.xint + self.cat.x_offset
+			y = self.cat.yint + self.cat.y_offset
+		else:
+			#! plotting (NaN,NaN) should not error, but also not plot anything. 
+			x=np.nan
+			y=np.nan
 
 		plt.figure(figsize=(12,4))
 		plt.subplot(131)
@@ -1503,6 +1526,27 @@ class starkiller():
 
 		hdul.writeto(name,overwrite=True)
 
+
+	def make_template_psf(self,alpha=2,beta=2,stddev=2,length=1,angle=0):
+		
+		#set to ints because they are not set earlier #! magic numbers that are reset later
+		self.x_length = 10
+		self.y_length = 10
+
+		if 'moffat' in self.psf_profile:
+			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=alpha,
+					  			  beta=beta,length=length,angle=angle,
+					  			  psf_profile=self.psf_profile)
+			self.psf_param = np.array([alpha,beta,length,angle])
+
+		elif 'gaussian' in self.psf_profile:
+			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,stddev=stddev,length=length,angle=angle,
+					  			  psf_profile=self.psf_profile)
+			self.psf_param = np.array([stddev,length,angle])
+			
+		self.psf.generate_line_psf()
+
+
 	def run_cube(self,trail=True):
 		"""
 		Run the cube reduction. This is the main function that calls all the other functions.
@@ -1514,42 +1558,45 @@ class starkiller():
 		"""
 		try:
 			self._load_cube()
-			self._get_cat(self.__download_cat)
-			#self._estimate_trail_angle(trail)
-			#self._find_sources_DAO()
-			self._find_fuzzy_mask()
-			if self._wcs_correction:
-				self._find_sources_cluster(trail)
-				self._fit_DAO_to_cat()
-			else:
-				self._fill_params()	
-			self._transform_coords()	
-			
-			if self.verbose:
-				print('Coords transformed')
-			#self._identify_cals()
-			self.complex_isolation_cals()
-			self.make_psf()
-			
-			if self._rerun_cal:
+			if self._kill_stars:
+				self._get_cat(self.__download_cat)
+				#self._estimate_trail_angle(trail)
+				#self._find_sources_DAO()
+				self._find_fuzzy_mask()
+				if self._wcs_correction:
+					self._find_sources_cluster(trail)
+					self._fit_DAO_to_cat()
+				else:
+					self._fill_params()	
+				self._transform_coords()	
+				
 				if self.verbose:
-					print('Rerunning cal with psf sources')
-				#self._psf_isolation()
-				self.make_psf()#fine_shift=True)
-				#self._psf_isolation()
-			self._psf_contained_check()
-			if self.verbose:
-				print('Made PSF')
-			if self._calc_psf_only:
-				print('Exiting')
-				return
-			self.all_spec()
-			if self.verbose:
-				print('Extracted spectra')
-			if self.verbose:
-				print('Background added')
-			self.fit_spec_residual()
-			self.plot_specs(show=self._show_specs)
+					print('Coords transformed')
+				#self._identify_cals()
+				self.complex_isolation_cals()
+				self.make_psf()
+				
+				if self._rerun_cal:
+					if self.verbose:
+						print('Rerunning cal selection with psf sources')
+					#self._psf_isolation()
+					self.make_psf()#fine_shift=True)
+					#self._psf_isolation()
+				self._psf_contained_check()
+				if self.verbose:
+					print('Made PSF')
+				if self._calc_psf_only:
+					print('Exiting')
+					return
+				self.all_spec()
+				if self.verbose:
+					print('Extracted spectra')
+				if self.verbose:
+					print('Background added')
+				self.fit_spec_residual()
+				self.plot_specs(show=self._show_specs)
+			else:
+				self.make_template_psf()
 
 			self._check_satellites()
 
