@@ -61,6 +61,15 @@ class sat_killer():
         image = np.where(np.isfinite(image), image, 0) #*turns any nans into 0s, to keep image finite everywhere
 
         self.image = image
+
+        #*Check to make sure the image was made when a line could be seen. 
+        # fig,  ax = plt.subplots()
+        # ax.imshow(image, origin="lower", cmap="grey")
+        # if self.savename is not None:
+        #     fig.savefig(f"{self.savename}sat_image.png")
+        # else:
+        #     fig.savefig("./sat_image.png")
+
     
     def _set_threshold(self,sigma):
         mean, med, std = sigma_clipped_stats(self.image)
@@ -214,7 +223,7 @@ class sat_killer():
                 if not used[i]:
                     diff = abs(angle[i] - angle)
                     distdiff = np.sqrt((yy[i]-yy)**2 + (xx,))
-                    ind = (diff < angle_close) & (ydiff < dist_close)
+                    ind = (diff < angle_close) & (distdiff < dist_close)
                     n_coefs += [np.nanmean(new_coefs[ind],axis=0)]
                     used[ind] = 1
             n_coefs = np.array(n_coefs)

@@ -771,6 +771,10 @@ class starkiller():
 		ii = dy[iy,ix] > self.trail*1.2
 		dx[iy[ii],ix[ii]] = 1e3
 		dy[iy[ii],ix[ii]] = 1e3
+
+		#* Would get to here before the empty cat would actually error at the nanmin
+		# print(f"Before Error:\n dy={dy}, dx={dx},\n iy={iy}, ix={ix}, ii={ii},\n ind={ind}, dmags={dmags}, ang={ang} \n yyy={yyy}, xxx={xxx},\n yy={yy}, xx={xx}\n cat={self.cat}")
+
 		if self.trail > 1:
 			isoind = (np.nanmin(dy,axis=0) > self.trail*1.2) & (mags < self.cal_maglim)
 		else:
