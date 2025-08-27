@@ -1357,14 +1357,16 @@ class starkiller():
 		else:
 			scene = cube_simulator(self.cube,psf=self.psf,catalog=self.cat,datapsf=data)
 		flux = []
-		for i in range(len(self.cat)):
-			#f = downsample_spec(self.models[i],self.lam)
-			f = self.models[i].sample(self.lam)
-			flux += [f*1e20 / self.flux_corr]
-		flux = np.array(flux)
-		scene.make_scene(flux)
-		self.scene = scene
+		if self._kill_stars:
+			for i in range(len(self.cat)):
+				#f = downsample_spec(self.models[i],self.lam)
+				f = self.models[i].sample(self.lam)
+				flux += [f*1e20 / self.flux_corr]
 
+		flux = np.array(flux)
+		scene.make_scene(flux, kill_stars = self._kill_stars)
+		self.scene = scene
+ 
 	def calc_difference(self):
 		"""
 		Calculate the difference between the scene and the cube. Adds in the diff variable.
@@ -1387,8 +1389,13 @@ class starkiller():
 		vmin = np.nanpercentile(image,16)
 		vmax = np.nanpercentile(image,95)
 
-		x = self.cat.xint + self.cat.x_offset
-		y = self.cat.yint + self.cat.y_offset
+		if self._kill_stars:
+			x = self.cat.xint + self.cat.x_offset
+			y = self.cat.yint + self.cat.y_offset
+		else:
+			#! plotting (NaN,NaN) should not error, but also not plot anything. 
+			x=np.nan
+			y=np.nan
 
 		plt.figure(figsize=(12,4))
 		plt.subplot(131)
@@ -1517,13 +1524,22 @@ class starkiller():
 
 
 	def make_template_psf(self,alpha=2,beta=2,stddev=2,length=1,angle=0):
+		
+		#set to ints because they are not set earlier #! magic numbers that are reset later
+		self.x_length = 10
+		self.y_length = 10
+
 		if 'moffat' in self.psf_profile:
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,alpha=alpha,
 					  			  beta=beta,length=length,angle=angle,
 					  			  psf_profile=self.psf_profile)
+			self.psf_param = np.array([alpha,beta,length,angle])
+
 		elif 'gaussian' in self.psf_profile:
 			self.psf = create_psf(x=self.x_length*2+1,y=self.y_length*2+1,stddev=stddev,length=length,angle=angle,
 					  			  psf_profile=self.psf_profile)
+			self.psf_param = np.array([stddev,length,angle])
+			
 		self.psf.generate_line_psf()
 
 
