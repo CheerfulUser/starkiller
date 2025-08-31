@@ -47,8 +47,10 @@ from .helpers import _has_len, _smooth_spec, _get_skymapper, _calc_bkg
 from .trail_psf import create_psf
 from .cube_simulator import cube_simulator
 from .satellite_finder import sat_killer
+from .image_killer import starkiller_image
 import pysynphot as S
 from scipy.interpolate import interp1d
+
 
 
 
