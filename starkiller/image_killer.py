@@ -59,10 +59,8 @@ def affine_positions(phot,mask=None):
 
 	res = least_squares(residuals, p0, args=(det_x[good], det_y[good], cat_x[good], cat_y[good]))
 	a, b, c, d, tx, ty = res.x
-	print("Affine parameters:", res.x)
 
 	x_warped, y_warped = affine_model(res.x,det_x, det_y)
-	#good_ind = np.isfinite(self.image[np.round(y_warped,0).astype(int),np.round(x_warped,0).astype(int)])
 
 	x_final = deepcopy(cat_x)
 	x_final[~good] = x_warped[~good]
