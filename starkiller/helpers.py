@@ -279,9 +279,9 @@ def get_star_cuts(x_length,y_length,image,cat,norm=False):
         x = [cat['xint'] + pad]; y = [cat['yint'] + pad]
     star_cuts = []
     good = []
-
+    
     for i in range(len(x)):
-        c = image[y[i]-y_length:y[i]+y_length+1,x[i]-x_length:x[i]+x_length+1]
+        c = image[int(y[i]-y_length):int(y[i]+y_length+1), int(x[i]-x_length):int(x[i]+x_length+1)]  #! could get here and them not be ints, unsure how... (ble)
         
         my,mx = np.where(np.nanmax(c) == c)
         star_cuts += [c]
@@ -465,7 +465,7 @@ def get_specs(cat,cube,x_length,y_length,psf,lam,num_cores,data_psf=None,fitpos=
     #num_cores = multiprocessing.cpu_count() - 3
     specs = []
     residual = []
-    sub_cube = deepcopy(cube)
+    sub_cube = deepcopy(cube) #?  Why does this copy exist???
     flux, res, xoff, yoff = zip(*Parallel(n_jobs=num_cores,verbose=0)(delayed(psf_spec)(cut,psf,data_psf,fitpos) for cut in cuts))
     #flux = np.zeros(len(cuts)); res = np.zeros(len(cuts))
     #xoff = np.zeros(len(cuts)); yoff = np.zeros(len(cuts))

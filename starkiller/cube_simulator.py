@@ -84,6 +84,8 @@ class cube_simulator():
         self.padding = padding
         self.satellite = satellite
 
+        self.all_psfs = None
+
         if datapsf:
             self.psf.longPSF = self.psf.data_PSF
             print('Using the data PSF')
@@ -162,6 +164,13 @@ class cube_simulator():
         # remove buffer
         self.satellite_seeds = self.satellite_seeds[:,self.padding:-self.padding,self.padding:-self.padding]
 
+        if self.all_psfs is not None:
+            #*appends the sat psf seeds to the stellar ones if they exist
+            self.all_psfs = np.append(self.all_psfs, np.nansum(self.satellite_seeds, axis=0))
+        else:
+            #* just makes the sat ones. 
+            self.all_psfs = np.nansum(self.satellite_seeds, axis=0)
+
         
     def mag_image(self):
         """
@@ -173,7 +182,7 @@ class cube_simulator():
             image += self.seeds[i] * self.cat['counts'].iloc[i]
         self.image = image
     
-    def make_scene(self,flux):
+    def make_scene(self,flux, kill_stars:bool=True):
         """
         Creates the scene which consists of the simulated sources in the data cube.
 
@@ -182,9 +191,10 @@ class cube_simulator():
         flux : np.array
             Array of fluxes for each spectral dimension in the data cube.
         """
-        for i in range(len(flux)):
-            seed = self.seeds[i]
-            self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
+        if kill_stars:
+            for i in range(len(flux)):
+                seed = self.seeds[i]
+                self.sim += seed[np.newaxis,:,:] * flux[i][:,np.newaxis,np.newaxis]
         if self.satellite is not None:
             for i in range(len(self.satellite_seeds)):
                 seed = self.satellite_seeds[i]
