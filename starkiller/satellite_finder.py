@@ -17,7 +17,7 @@ class sat_killer():
                  savename=None,y_close=5,angle_close=2,dist_close=10,num_cores=5,run=True):
         self.cube = cube
         self.star_psf = psf
-        self.thickness = sat_thickness
+        self.thickness = sat_thickness #TODO ble thinks this should be dynamically set. Maybe with the PSF thickness
         self.savename = savename
         #self.y_close = y_close
         #self.angle_close = angle_close
@@ -40,6 +40,7 @@ class sat_killer():
                 self._detected()
                 if self.sat_num > 0:
                     self.make_satellite_psf()
+                    #? self.fitpsf() should be here??
                     self._fit_spec()
 
     def _make_image(self):
@@ -340,7 +341,7 @@ class sat_killer():
         self.centers = np.array(centers)
         self.lengths = np.array(lengths)
         self.angles = np.array(angles)
-        self.cut_dims = (np.array(cut_dims) * 1.5).astype(int)
+        self.cut_dims = (np.array(cut_dims) * 1.5).astype(int) #! divide by 2, multiply by 1.5??? (ble)
         
         satcat = pd.DataFrame([])
         satcat['xint'] = self.centers[:,0].astype(int)
@@ -383,7 +384,7 @@ class sat_killer():
         for i in range(self.sat_num):
             if 'gaussian' in self.star_psf.psf_profile:
                 self.sat_psfs += [create_psf(self.cut_dims[i,0]*2+1,self.cut_dims[i,1]*2+1,angle = self.angles[i],
-                                           length = self.lengths[i],stddev=self.star_psf.stddev)]
+                                           length = self.lengths[i],stddev=self.star_psf.stddev)] #! another multiply by 2 of cutdims. Now we are at 1.5 times the original lenght??? (ble)
             elif 'moffat' in self.star_psf.psf_profile:
                 self.sat_psfs += [create_psf(self.cut_dims[i,0]*2+1,self.cut_dims[i,1]*2+1,angle = self.angles[i],
                                            length = self.lengths[i],alpha=self.star_psf.alpha,beta=self.star_psf.beta)]
@@ -395,7 +396,7 @@ class sat_killer():
         self.satcat['x'] = 0; self.satcat['y'] = 0
         self.satcat['xoff'] = 0; self.satcat['yoff'] = 0;
         for i in range(self.sat_num):
-            cut = cube_cutout(self.cube,self.satcat.iloc[i],self.cut_dims[i,0],self.cut_dims[i,1])[0]
+            cut = cube_cutout(self.cube,self.satcat.iloc[i],self.cut_dims[i,0],self.cut_dims[i,1])[0] #! still at 3/4 lenght 
             psf = self.sat_psfs[i]
             psf.fit_pos(np.nanmean(cut,axis=0),range=5)
             xoff = psf.source_x; yoff = psf.source_y
